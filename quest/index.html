@@ -204,6 +204,19 @@
   .q-hp-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .q-hp-row .bar { flex: 1; margin-top: 0; }
   .q-hp-txt { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+  .battle-hint { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+  .q-done-btn {
+    font-family: inherit;
+    background: var(--panel-light);
+    color: var(--xp);
+    border: 2px solid var(--border);
+    border-radius: 3px;
+    font-size: 11px;
+    padding: 1px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .q-done-btn:hover { background: var(--xp); color: #10322a; border-color: var(--xp); }
   .quest.done-q { opacity: .55; cursor: default; }
   .quest.done-q:hover { transform: none; }
   .quest.done-q .q-title { text-decoration: line-through; }
@@ -321,7 +334,9 @@
       <button class="len-btn" data-min="45">45分</button>
     </div>
     <button class="btn" id="startBtn">たたかう！</button>
+    <button class="btn" id="doneEarlyBtn" style="display:none">👑 討伐完了！</button>
     <button class="btn secondary" id="giveUpBtn" style="display:none">にげる</button>
+    <div class="battle-hint" id="battleHint" style="display:none">タイマーより早く終わったら「討伐完了！」で即勝利だケロ</div>
   </div>
 
   <!-- ===== tickets ===== -->
@@ -611,14 +626,17 @@ function renderQuests() {
     el.innerHTML = `
       <div class="q-head">
         <div class="q-title">${isBoss ? "👹 " : "⚔ "}${escapeHtml(q.title)}</div>
-        <div>${isBoss ? '<span class="q-badge boss-badge">BOSS</span>' : ""}${priBadge(q)}</div>
+        <div>${isBoss ? '<span class="q-badge boss-badge">BOSS</span>' : ""}${priBadge(q)}<button class="q-done-btn" title="戦わずに討伐済みにする">✓済</button></div>
       </div>
       <div class="q-meta">${q.due ? "📅 " + escapeHtml(q.due) : ""}<span>${q.hp}セッションで討伐</span></div>
       <div class="q-hp-row">
         <div class="bar bar-hp"><div style="width:${remain / q.hp * 100}%"></div></div>
         <div class="q-hp-txt">HP ${remain}/${q.hp}</div>
       </div>`;
-    el.addEventListener("click", () => selectQuest(q.key));
+    el.addEventListener("click", e => {
+      if (e.target.closest(".q-done-btn")) { markDone(q.key); return; }
+      selectQuest(q.key);
+    });
     list.appendChild(el);
   }
 
@@ -693,34 +711,38 @@ function startSession() {
   save();
   SFX.start();
   sippySay("fighting");
-  document.getElementById("startBtn").style.display = "none";
-  document.getElementById("giveUpBtn").style.display = "";
+  setBattleButtons(true);
   tickHandle = setInterval(tick, 500);
   renderTime();
+}
+function setBattleButtons(inBattle) {
+  document.getElementById("startBtn").style.display = inBattle ? "none" : "";
+  document.getElementById("doneEarlyBtn").style.display = inBattle ? "" : "none";
+  document.getElementById("giveUpBtn").style.display = inBattle ? "" : "none";
+  document.getElementById("battleHint").style.display = inBattle ? "" : "none";
 }
 function giveUpSession() {
   // 「にげる」はペナルティなし。責めない設計。
   S.timerEnd = null; S.timerQuest = null;
   save();
   clearInterval(tickHandle);
-  document.getElementById("startBtn").style.display = "";
-  document.getElementById("giveUpBtn").style.display = "none";
+  setBattleButtons(false);
   document.getElementById("sippySays").textContent = "逃げるのも作戦のうちだケロ。また来ればいいケロ！";
   renderTime();
 }
-function finishSession() {
+function finishSession(opts) {
+  opts = opts || {};
   clearInterval(tickHandle);
   const qKey = S.timerQuest;
   S.timerEnd = null; S.timerQuest = null;
-  document.getElementById("startBtn").style.display = "";
-  document.getElementById("giveUpBtn").style.display = "none";
+  setBattleButtons(false);
 
-  // ダメージ処理
+  // ダメージ処理（早期討伐ならHPを全部削る）
   const q = quests.find(x => x.key === qKey);
   let cleared = false, isBoss = false;
   if (q) {
     const p = progressOf(q.key);
-    p.damage++;
+    p.damage = opts.forceClear ? q.hp : p.damage + 1;
     isBoss = q.hp >= BOSS_MIN_HP;
     if (p.damage >= q.hp) { p.done = true; p.doneAt = Date.now(); cleared = true; }
     S.quests[q.key] = p;
@@ -765,6 +787,27 @@ function finishSession() {
   if (gotTicket) { msg += "\n\n🎟 ゲーム解禁チケットを手に入れた！"; SFX.ticket(); }
   if (leveled) { msg += `\n\n⭐ レベルアップ！ Lv${S.lvl} になった！`; SFX.levelup(); confetti(60); }
   showOverlay(title, msg);
+  sippySay("victory");
+}
+function markDone(key) {
+  if (S.timerEnd) return; // 戦闘中は不可
+  const q = quests.find(x => x.key === key);
+  if (!q) return;
+  const p = progressOf(key);
+  if (p.done) return;
+  p.damage = q.hp; p.done = true; p.doneAt = Date.now();
+  S.quests[key] = p;
+  const isBoss = q.hp >= BOSS_MIN_HP;
+  const gained = isBoss ? XP_BOSS_CLEAR : XP_QUEST_CLEAR;
+  const leveled = gainXp(gained);
+  save();
+  renderStatus();
+  renderQuests();
+  SFX.clear();
+  confetti(30);
+  let msg = `「${q.title}」はもう倒していたようだ！\n+${gained} EXP`;
+  if (leveled) { msg += `\n\n⭐ レベルアップ！ Lv${S.lvl} になった！`; SFX.levelup(); }
+  showOverlay("討伐済み!", msg);
   sippySay("victory");
 }
 function gainXp(n) {
@@ -860,6 +903,10 @@ function showOverlay(title, msg, cb) {
 
 /* ---------- events ---------- */
 document.getElementById("startBtn").addEventListener("click", startSession);
+document.getElementById("doneEarlyBtn").addEventListener("click", () => {
+  if (!S.timerEnd) return;
+  finishSession({ forceClear: true });
+});
 document.getElementById("giveUpBtn").addEventListener("click", giveUpSession);
 document.getElementById("ovClose").addEventListener("click", () => {
   document.getElementById("overlay").classList.remove("show");
@@ -915,8 +962,7 @@ document.body.addEventListener("drop", e => {
   } else {
     if (S.timerEnd) {
       selectedKey = S.timerQuest;
-      document.getElementById("startBtn").style.display = "none";
-      document.getElementById("giveUpBtn").style.display = "";
+      setBattleButtons(true);
       tickHandle = setInterval(tick, 500);
     }
     loadInitialCsv();
