@@ -288,6 +288,11 @@
     color: var(--text); font-family: inherit; font-size: 12px;
     padding: 4px 8px; border-radius: 4px; cursor: pointer; z-index: 50;
   }
+  .update-btn { right: 72px; }
+  .update-btn.has-update {
+    background: var(--gold); color: #222; border-color: var(--gold-dark);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
   @media (max-width: 480px) {
     .time { font-size: 44px; }
     header h1 { font-size: 20px; }
@@ -297,6 +302,7 @@
 </head>
 <body>
 <button class="mute-btn" id="muteBtn">♪ ON</button>
+<button class="mute-btn update-btn" id="updateBtn" title="アプリを最新版に更新">🔄 更新</button>
 <div class="wrap">
 
   <header>
@@ -373,6 +379,7 @@
 
   <footer>
     <a href="../index.html">← Sippy Games トップへ</a>
+    <div id="verTxt" style="margin-top:6px"></div>
   </footer>
 </div>
 
@@ -394,6 +401,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
+const APP_VERSION = "1.2.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -933,6 +941,25 @@ document.getElementById("muteBtn").addEventListener("click", () => {
   document.getElementById("muteBtn").textContent = S.muted ? "♪ OFF" : "♪ ON";
 });
 
+/* ---------- app update ---------- */
+// ホーム画面から起動するとブラウザの更新操作ができないため、アプリ内から
+// キャッシュを回避して最新版を読み込み直す。データ(localStorage)は消えない。
+document.getElementById("updateBtn").addEventListener("click", () => {
+  location.replace(location.pathname + "?u=" + Date.now());
+});
+async function checkForUpdate() {
+  try {
+    const res = await fetch(location.pathname + "?vc=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) return;
+    const m = (await res.text()).match(/APP_VERSION = "([^"]+)"/);
+    if (m && m[1] !== APP_VERSION) {
+      const b = document.getElementById("updateBtn");
+      b.textContent = "🔄 新Ver!";
+      b.classList.add("has-update");
+    }
+  } catch {}
+}
+
 // drag & drop
 let dragDepth = 0;
 document.body.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; document.body.classList.add("dragover"); });
@@ -948,6 +975,8 @@ document.body.addEventListener("drop", e => {
 
 /* ---------- init ---------- */
 (function init() {
+  document.getElementById("verTxt").textContent = "Sippy Quest v" + APP_VERSION;
+  checkForUpdate();
   document.getElementById("muteBtn").textContent = S.muted ? "♪ OFF" : "♪ ON";
   document.querySelectorAll(".len-btn").forEach(b => b.classList.toggle("active", parseInt(b.dataset.min, 10) === S.timerMin));
   checkStreakOnLoad();
