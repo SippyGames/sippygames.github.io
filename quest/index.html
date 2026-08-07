@@ -402,7 +402,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.3.1";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -634,13 +634,13 @@ function exportCsv() {
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "tasks.csv";
+  a.download = "tasks-done.csv";
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   document.getElementById("csvStatus").textContent =
-    `討伐結果入りの tasks.csv を書き出したケロ（完了 ${doneCount}件）。OneDrive等の元ファイルに上書き保存してね。`;
+    `討伐結果を tasks-done.csv に書き出したケロ（完了 ${doneCount}件）。OneDriveのSippyQuestフォルダに保存すれば、タスク管理側が完了フラグを取り込んでくれるケロ。元のtasks.csvへの上書きはしないでね。`;
   SFX.ticket();
 }
 
