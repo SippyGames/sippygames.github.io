@@ -427,7 +427,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.6.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -529,6 +529,7 @@ const COL_ALIASES = {
   priority: ["priority", "優先度", "重要度"],
   due:      ["due", "deadline", "date", "期限", "締切", "締め切り", "期日", "日付"],
   status:   ["status", "done", "state", "状態", "ステータス", "完了", "進捗"],
+  doneAt:   ["完了日時", "完了日", "completed_at", "done_at", "completed", "完了時刻"],
   id:       ["id", "ＩＤ", "番号", "no", "no."]
 };
 function findCol(header, aliases) {
@@ -615,6 +616,11 @@ function progressOf(key) {
 }
 
 /* ---------- CSV export（討伐結果をCSVに反映して書き出す） ---------- */
+function fmtDateTime(ts) {
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
 function exportCsv() {
   if (!S.csvCache) {
     showOverlay("書き出せないケロ", "先にタスクCSVを読み込んでね。");
@@ -634,12 +640,15 @@ function exportCsv() {
   }
   const titleCol = hasHeader && col.title >= 0 ? col.title : 0;
   const idCol = hasHeader ? col.id : -1;
-  let statusCol;
+  let statusCol, doneAtCol;
   if (hasHeader) {
     statusCol = col.status;
     if (statusCol < 0) { statusCol = out[0].length; out[0].push("状態"); }
+    doneAtCol = col.doneAt;
+    if (doneAtCol < 0) { doneAtCol = out[0].length; out[0].push("完了日時"); }
   } else {
     statusCol = Math.max(...out.map(r => r.length));
+    doneAtCol = statusCol + 1;
   }
 
   let doneCount = 0;
@@ -649,8 +658,14 @@ function exportCsv() {
     const title = (r[titleCol] || "").trim();
     if (!title) continue;
     const id = idCol >= 0 ? (r[idCol] || "").trim() : "";
-    while (r.length <= statusCol) r.push("");
-    if (progressOf(questKey(id, title)).done) { r[statusCol] = "完了"; doneCount++; }
+    while (r.length <= Math.max(statusCol, doneAtCol)) r.push("");
+    const p = progressOf(questKey(id, title));
+    if (p.done) {
+      r[statusCol] = "完了";
+      doneCount++;
+      // タスク管理側が既に記録した完了日時は上書きしない
+      if (p.doneAt && !(r[doneAtCol] || "").trim()) r[doneAtCol] = fmtDateTime(p.doneAt);
+    }
   }
 
   const csv = out.map(r =>
