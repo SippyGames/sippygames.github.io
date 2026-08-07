@@ -348,10 +348,10 @@
   <div class="panel">
     <div class="panel-title">クエスト取り込み（CSV）</div>
     <div class="csv-row">
-      <button class="btn secondary" id="reloadCsvBtn">tasks.csv を再読み込み</button>
       <button class="btn secondary" id="pickCsvBtn">CSVファイルを選ぶ</button>
+      <button class="btn secondary" id="reloadCsvBtn">共有tasks.csvを読み込む</button>
       <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none">
-      <div class="drop-hint">※ このページにCSVをドラッグ＆ドロップしてもOK</div>
+      <div class="drop-hint">※ スマホはOneDrive/Googleドライブ内のCSVも選べます。PCはドラッグ＆ドロップでもOK。<br>CSVの中身はこの端末のブラウザ内だけで処理され、外部に送信されることはありません。</div>
       <div class="csv-status" id="csvStatus">未読み込み</div>
     </div>
   </div>
@@ -532,9 +532,17 @@ async function loadCsvFromRepo(silent) {
     if (S.csvCache) {
       applyCsv(S.csvCache, S.csvSource + "（前回の記憶から復元）");
     } else if (!silent) {
-      st.textContent = "tasks.csv が見つからないケロ… CSVをドロップするか、quest/tasks.csv をpushしてね。";
+      st.textContent = "まだクエストがないケロ。「CSVファイルを選ぶ」からタスクCSVを読み込んでね（スマホならOneDriveやGoogleドライブの中のファイルも選べるケロ）";
     }
   }
+}
+// 起動時は保存済みデータを最優先（読み込んだ実タスクがサンプル等で上書きされないように）
+function loadInitialCsv() {
+  if (S.csvCache) {
+    applyCsv(S.csvCache, (S.csvSource || "前回のデータ") + "（自動復元）");
+    return Promise.resolve();
+  }
+  return loadCsvFromRepo(false);
 }
 function applyCsv(text, sourceLabel) {
   quests = csvToQuests(text);
@@ -897,12 +905,13 @@ document.body.addEventListener("drop", e => {
   document.querySelectorAll(".len-btn").forEach(b => b.classList.toggle("active", parseInt(b.dataset.min, 10) === S.timerMin));
   checkStreakOnLoad();
   renderStatus();
+  renderQuests();
   renderTime();
 
   // 再読み込みでも戦闘中タイマーを復元
   if (S.timerEnd && Date.now() >= S.timerEnd) {
-    // 閉じてる間にセッションが終わっていた → 成果をクレジットしてからCSV更新
-    loadCsvFromRepo(true).then(() => finishSession());
+    // 閉じてる間にセッションが終わっていた → 成果をクレジットしてからCSV読み込み
+    loadInitialCsv().then(() => finishSession());
   } else {
     if (S.timerEnd) {
       selectedKey = S.timerQuest;
@@ -910,7 +919,7 @@ document.body.addEventListener("drop", e => {
       document.getElementById("giveUpBtn").style.display = "";
       tickHandle = setInterval(tick, 500);
     }
-    loadCsvFromRepo(true);
+    loadInitialCsv();
   }
 })();
 </script>
