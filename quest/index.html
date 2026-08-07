@@ -231,6 +231,20 @@
   .quest.done-q:hover { transform: none; }
   .quest.done-q .q-title { text-decoration: line-through; }
   .empty-msg { color: var(--text-dim); font-size: 13px; text-align: center; padding: 12px 0; }
+  .board-summary {
+    background: #16112e;
+    border: 2px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+  }
+  .board-summary b { color: var(--gold); font-size: 16px; }
+  .board-summary .rec-count b { color: var(--xp); }
+  .q-badge.rec-badge { background: #14532d; color: #86efac; }
 
   /* ===== tickets ===== */
   .ticket-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -368,6 +382,7 @@
   <!-- ===== quests ===== -->
   <div class="panel">
     <div class="panel-title">クエストボード</div>
+    <div class="board-summary" id="boardSummary" style="display:none"></div>
     <div id="questList"></div>
     <div id="doneWrap" style="display:none">
       <div class="panel-title" style="margin-top:14px">討伐済み</div>
@@ -412,7 +427,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.5.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -669,6 +684,34 @@ function renderStatus() {
   document.getElementById("useTicketBtn").disabled = S.tickets < 1;
 }
 
+// 今日の推奨: 期限が今日以前（期限切れ含む）または優先度「高」
+function isRecommendedToday(q) {
+  if (q.priority === "high") return true;
+  if (!q.due) return false;
+  const m = q.due.match(/(\d{4})[-\/年](\d{1,2})[-\/月]?(\d{1,2})/);
+  if (!m) return false;
+  const dueStr = m[1] + "-" + String(+m[2]).padStart(2, "0") + "-" + String(+m[3]).padStart(2, "0");
+  return dueStr <= todayStr();
+}
+
+function renderBoardSummary(active) {
+  const el = document.getElementById("boardSummary");
+  if (!quests.length) { el.style.display = "none"; return; }
+  el.style.display = "";
+  if (!active.length) {
+    el.innerHTML = "🎉 全クエスト討伐済み！すごいケロ！";
+    return;
+  }
+  const bosses = active.filter(q => q.hp >= BOSS_MIN_HP).length;
+  const normals = active.length - bosses;
+  const rec = active.filter(isRecommendedToday).length;
+  el.innerHTML =
+    `<span>残り <b>${active.length}</b>件</span>` +
+    `<span>👹BOSS <b>${bosses}</b></span>` +
+    `<span>⚔通常 <b>${normals}</b></span>` +
+    `<span class="rec-count">⭐今日の推奨 <b>${rec}</b></span>`;
+}
+
 function priBadge(q) {
   if (q.priority === "high") return '<span class="q-badge pri-high">優先:高</span>';
   if (q.priority === "low") return '<span class="q-badge">優先:低</span>';
@@ -689,6 +732,7 @@ function renderQuests() {
   const active = quests.filter(q => !progressOf(q.key).done);
   const prival = { high: 0, mid: 1, low: 2 };
   active.sort((a, b) => (prival[a.priority] - prival[b.priority]) || (a.due || "9999").localeCompare(b.due || "9999"));
+  renderBoardSummary(active);
 
   for (const q of active) {
     const p = progressOf(q.key);
@@ -700,7 +744,7 @@ function renderQuests() {
     el.innerHTML = `
       <div class="q-head">
         <div class="q-title">${isBoss ? "👹 " : "⚔ "}${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}</div>
-        <div>${isBoss ? '<span class="q-badge boss-badge">BOSS</span>' : ""}${priBadge(q)}<button class="q-done-btn" title="戦わずに討伐済みにする">✓済</button></div>
+        <div>${isRecommendedToday(q) ? '<span class="q-badge rec-badge">⭐今日</span>' : ""}${isBoss ? '<span class="q-badge boss-badge">BOSS</span>' : ""}${priBadge(q)}<button class="q-done-btn" title="戦わずに討伐済みにする">✓済</button></div>
       </div>
       <div class="q-meta">${q.due ? "📅 " + escapeHtml(q.due) : ""}<span>${q.hp}セッションで討伐</span></div>
       <div class="q-hp-row">
