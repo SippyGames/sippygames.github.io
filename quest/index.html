@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sippy Quest | やる気クエスト</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1a1533;
+    --bg2: #241d47;
+    --panel: #2d2560;
+    --panel-light: #3a3178;
+    --border: #6c5ce7;
+    --gold: #ffd93d;
+    --gold-dark: #e8b923;
+    --hp: #ff5e5e;
+    --hp-dark: #a83232;
+    --xp: #6ee7b7;
+    --text: #f0ecff;
+    --text-dim: #a89fd8;
+    --boss: #ff8fa3;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: 'DotGothic16', 'MS Gothic', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(1px 1px at 20% 30%, #fff8 50%, transparent 50%),
+      radial-gradient(1px 1px at 70% 15%, #fff6 50%, transparent 50%),
+      radial-gradient(2px 2px at 85% 45%, #ffd93d55 50%, transparent 50%),
+      radial-gradient(1px 1px at 40% 70%, #fff5 50%, transparent 50%),
+      radial-gradient(1px 1px at 90% 80%, #fff7 50%, transparent 50%),
+      radial-gradient(1px 1px at 10% 85%, #fff6 50%, transparent 50%),
+      radial-gradient(2px 2px at 55% 25%, #fff4 50%, transparent 50%);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 16px 12px 80px; }
+
+  /* ===== pixel panel ===== */
+  .panel {
+    background: var(--panel);
+    border: 3px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 0 0 3px var(--bg), 4px 4px 0 3px #00000055;
+    padding: 14px;
+    margin-bottom: 18px;
+    position: relative;
+  }
+  .panel-title {
+    font-size: 14px;
+    color: var(--gold);
+    letter-spacing: 2px;
+    margin-bottom: 10px;
+  }
+  .panel-title::before { content: "◆ "; }
+
+  /* ===== header ===== */
+  header { text-align: center; padding: 10px 0 16px; }
+  header h1 {
+    font-size: 26px;
+    color: var(--gold);
+    text-shadow: 2px 2px 0 #000, 0 0 12px #ffd93d66;
+    letter-spacing: 3px;
+  }
+  header .subtitle { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+
+  /* ===== sippy companion ===== */
+  .companion { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 18px; }
+  .companion img {
+    width: 96px; height: 96px;
+    image-rendering: pixelated;
+    animation: bounce 2.4s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes bounce { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-6px);} }
+  .bubble {
+    background: #fff;
+    color: #222;
+    border: 3px solid #000;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    position: relative;
+    flex: 1;
+    box-shadow: 3px 3px 0 #00000066;
+  }
+  .bubble::before {
+    content: "";
+    position: absolute;
+    left: -12px; bottom: 16px;
+    border: 6px solid transparent;
+    border-right-color: #000;
+  }
+  .bubble::after {
+    content: "";
+    position: absolute;
+    left: -7px; bottom: 17px;
+    border: 5px solid transparent;
+    border-right-color: #fff;
+  }
+
+  /* ===== status ===== */
+  .status-grid { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+  .stat { font-size: 14px; }
+  .stat b { color: var(--gold); font-size: 18px; }
+  .bar {
+    height: 14px;
+    background: #16112e;
+    border: 2px solid #000;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .bar > div { height: 100%; transition: width .6s cubic-bezier(.2,.8,.3,1); }
+  .bar-xp > div { background: linear-gradient(180deg, #a7f3d0, var(--xp) 40%, #34d399); }
+  .bar-hp > div { background: linear-gradient(180deg, #ff9b9b, var(--hp) 40%, var(--hp-dark)); }
+  .xp-row { width: 100%; }
+  .xp-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); }
+  .streak-flames { letter-spacing: 1px; }
+
+  /* ===== timer ===== */
+  .timer-box { text-align: center; }
+  .fighting {
+    font-size: 13px; color: var(--boss);
+    min-height: 20px;
+    margin-bottom: 4px;
+  }
+  .time {
+    font-size: 56px;
+    color: var(--text);
+    text-shadow: 3px 3px 0 #000;
+    letter-spacing: 4px;
+    line-height: 1.1;
+  }
+  .time.running { color: var(--gold); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1;} 50% { opacity: .75;} }
+  .timer-lens { display: flex; justify-content: center; gap: 6px; margin: 10px 0 12px; }
+  .len-btn {
+    font-family: inherit;
+    background: var(--panel-light);
+    color: var(--text-dim);
+    border: 2px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .len-btn.active { background: var(--gold); color: #222; border-color: var(--gold-dark); }
+  .btn {
+    font-family: inherit;
+    font-size: 16px;
+    padding: 10px 26px;
+    border: 3px solid #000;
+    border-radius: 4px;
+    cursor: pointer;
+    background: linear-gradient(180deg, #ffe873, var(--gold) 40%, var(--gold-dark));
+    color: #222;
+    box-shadow: 3px 3px 0 #00000088;
+    letter-spacing: 2px;
+  }
+  .btn:active { transform: translate(2px,2px); box-shadow: 1px 1px 0 #00000088; }
+  .btn.secondary { background: var(--panel-light); color: var(--text); border-color: var(--border); font-size: 13px; padding: 6px 14px; }
+  .btn:disabled { filter: grayscale(1) brightness(.7); cursor: not-allowed; }
+
+  /* ===== quests ===== */
+  .quest {
+    background: var(--bg2);
+    border: 2px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    position: relative;
+    transition: transform .1s;
+  }
+  .quest:hover { transform: translateX(3px); }
+  .quest.selected { border-color: var(--gold); box-shadow: 0 0 10px #ffd93d55; }
+  .quest.selected::before {
+    content: "▶";
+    position: absolute; left: -18px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--gold);
+    animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .quest.boss { border-color: var(--boss); background: linear-gradient(180deg, #3d1f3d, var(--bg2)); }
+  .quest.boss.selected { border-color: var(--gold); }
+  .q-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .q-title { font-size: 15px; }
+  .q-badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    background: var(--panel-light); color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .q-badge.boss-badge { background: var(--hp-dark); color: #ffd0d0; }
+  .q-badge.pri-high { background: #7c2d12; color: #fdba74; }
+  .q-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .q-hp-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .q-hp-row .bar { flex: 1; margin-top: 0; }
+  .q-hp-txt { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+  .quest.done-q { opacity: .55; cursor: default; }
+  .quest.done-q:hover { transform: none; }
+  .quest.done-q .q-title { text-decoration: line-through; }
+  .empty-msg { color: var(--text-dim); font-size: 13px; text-align: center; padding: 12px 0; }
+
+  /* ===== tickets ===== */
+  .ticket-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .tickets { font-size: 22px; letter-spacing: 3px; min-height: 28px; }
+  .ticket-note { font-size: 11px; color: var(--text-dim); width: 100%; }
+
+  /* ===== csv ===== */
+  .csv-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .csv-status { font-size: 11px; color: var(--text-dim); width: 100%; margin-top: 6px; }
+  .drop-hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+  body.dragover::after {
+    content: "CSVをここにドロップ！";
+    position: fixed; inset: 0;
+    background: #1a1533ee;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; color: var(--gold);
+    z-index: 99;
+    border: 6px dashed var(--gold);
+  }
+
+  /* ===== overlays / fx ===== */
+  .overlay {
+    position: fixed; inset: 0;
+    background: #000000cc;
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 100;
+    text-align: center;
+  }
+  .overlay.show { display: flex; }
+  .overlay-inner { animation: zoomin .4s cubic-bezier(.2,1.6,.4,1); padding: 20px; }
+  @keyframes zoomin { from { transform: scale(.3); opacity: 0;} to { transform: scale(1); opacity: 1;} }
+  .overlay h2 { font-size: 34px; color: var(--gold); text-shadow: 3px 3px 0 #000; letter-spacing: 4px; margin-bottom: 10px; }
+  .overlay p { font-size: 15px; margin-bottom: 18px; white-space: pre-line; }
+  .dmg-pop {
+    position: absolute;
+    right: 14px; top: -6px;
+    color: var(--gold);
+    font-size: 24px;
+    text-shadow: 2px 2px 0 #000;
+    animation: dmgfly 1s ease-out forwards;
+    pointer-events: none;
+    z-index: 10;
+  }
+  @keyframes dmgfly { 0% { transform: translateY(0); opacity: 1;} 100% { transform: translateY(-36px); opacity: 0;} }
+  .shake { animation: shake .4s; }
+  @keyframes shake {
+    0%,100% { transform: translateX(0);}
+    20% { transform: translateX(-5px);} 40% { transform: translateX(5px);}
+    60% { transform: translateX(-3px);} 80% { transform: translateX(3px);}
+  }
+  .confetti-piece {
+    position: fixed; top: -10px;
+    width: 8px; height: 8px;
+    z-index: 101;
+    animation: fall linear forwards;
+  }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }
+
+  footer { text-align: center; font-size: 11px; color: var(--text-dim); margin-top: 30px; }
+  footer a { color: var(--text-dim); }
+  .mute-btn {
+    position: fixed; top: 10px; right: 10px;
+    background: var(--panel); border: 2px solid var(--border);
+    color: var(--text); font-family: inherit; font-size: 12px;
+    padding: 4px 8px; border-radius: 4px; cursor: pointer; z-index: 50;
+  }
+  @media (max-width: 480px) {
+    .time { font-size: 44px; }
+    header h1 { font-size: 20px; }
+    .companion img { width: 72px; height: 72px; }
+  }
+</style>
+</head>
+<body>
+<button class="mute-btn" id="muteBtn">♪ ON</button>
+<div class="wrap">
+
+  <header>
+    <h1>SIPPY QUEST</h1>
+    <div class="subtitle">～ やる気クエスト：今日のタスクをボス戦に ～</div>
+  </header>
+
+  <div class="companion">
+    <img src="../images/sippy-frog.png" alt="Sippy">
+    <div class="bubble" id="sippySays">よく来たな、勇者よ！今日のクエストを確認するケロ。</div>
+  </div>
+
+  <!-- ===== player status ===== -->
+  <div class="panel">
+    <div class="panel-title">ステータス</div>
+    <div class="status-grid">
+      <div class="stat">Lv <b id="lvl">1</b></div>
+      <div class="stat">討伐セッション <b id="sessions">0</b></div>
+      <div class="stat">🔥 連続 <b id="streak">0</b>日 <span id="streakState" class="streak-flames"></span></div>
+      <div class="xp-row">
+        <div class="xp-label"><span>EXP</span><span id="xpTxt">0 / 100</span></div>
+        <div class="bar bar-xp"><div id="xpBar" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== timer ===== -->
+  <div class="panel timer-box">
+    <div class="panel-title" style="text-align:left">戦闘</div>
+    <div class="fighting" id="fighting">↓ 下のリストから挑むクエストを選ぶ</div>
+    <div class="time" id="time">25:00</div>
+    <div class="timer-lens" id="lenBtns">
+      <button class="len-btn" data-min="15">15分</button>
+      <button class="len-btn active" data-min="25">25分</button>
+      <button class="len-btn" data-min="45">45分</button>
+    </div>
+    <button class="btn" id="startBtn">たたかう！</button>
+    <button class="btn secondary" id="giveUpBtn" style="display:none">にげる</button>
+  </div>
+
+  <!-- ===== tickets ===== -->
+  <div class="panel">
+    <div class="panel-title">ごほうび</div>
+    <div class="ticket-row">
+      <div>ゲーム解禁チケット：<span class="tickets" id="tickets">－</span></div>
+      <button class="btn secondary" id="useTicketBtn">チケットを使って遊ぶ(30分)</button>
+      <div class="ticket-note">セッション3回クリアごとにチケット1枚ゲット。ゲームは我慢じゃなくて「報酬」だケロ！</div>
+    </div>
+  </div>
+
+  <!-- ===== quests ===== -->
+  <div class="panel">
+    <div class="panel-title">クエストボード</div>
+    <div id="questList"></div>
+    <div id="doneWrap" style="display:none">
+      <div class="panel-title" style="margin-top:14px">討伐済み</div>
+      <div id="doneList"></div>
+    </div>
+  </div>
+
+  <!-- ===== csv ===== -->
+  <div class="panel">
+    <div class="panel-title">クエスト取り込み（CSV）</div>
+    <div class="csv-row">
+      <button class="btn secondary" id="pickCsvBtn">CSVファイルを選ぶ</button>
+      <button class="btn secondary" id="reloadCsvBtn">共有tasks.csvを読み込む</button>
+      <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none">
+      <div class="drop-hint">※ スマホはOneDrive/Googleドライブ内のCSVも選べます。PCはドラッグ＆ドロップでもOK。<br>CSVの中身はこの端末のブラウザ内だけで処理され、外部に送信されることはありません。</div>
+      <div class="csv-status" id="csvStatus">未読み込み</div>
+    </div>
+  </div>
+
+  <footer>
+    <a href="../index.html">← Sippy Games トップへ</a>
+  </footer>
+</div>
+
+<!-- ===== overlays ===== -->
+<div class="overlay" id="overlay">
+  <div class="overlay-inner">
+    <h2 id="ovTitle">VICTORY!</h2>
+    <p id="ovMsg"></p>
+    <button class="btn" id="ovClose">つぎへ</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =====================================================
+   Sippy Quest — RPG風タスク管理 for ADHD
+   - tasks.csv からクエスト自動登録（Claude Codeが更新→pushで反映）
+   - 進捗・レベル・ストリークは localStorage に保存
+   ===================================================== */
+
+const LS_KEY = "sippyQuest.v1";
+const SESSIONS_PER_TICKET = 3;
+const XP_PER_SESSION = 30;
+const XP_QUEST_CLEAR = 50;
+const XP_BOSS_CLEAR = 120;
+const BOSS_MIN_HP = 3;
+const GAME_URL = "../games/battle-island/";
+
+/* ---------- state ---------- */
+function defaultState() {
+  return {
+    xp: 0, lvl: 1, sessions: 0, tickets: 0, sessionsTowardTicket: 0,
+    streak: 0, lastActiveDate: null, streakFrozen: false,
+    quests: {},          // key -> {damage, done, doneAt}
+    csvCache: null,      // 最後に読み込んだCSVテキスト（ドロップ分の復元用）
+    csvSource: null,
+    timerEnd: null, timerQuest: null, timerMin: 25,
+    muted: false
+  };
+}
+let S = load();
+function load() {
+  try { return Object.assign(defaultState(), JSON.parse(localStorage.getItem(LS_KEY) || "{}")); }
+  catch { return defaultState(); }
+}
+function save() { localStorage.setItem(LS_KEY, JSON.stringify(S)); }
+
+let quests = [];        // CSV由来のクエスト定義（進捗はS.questsとマージ）
+let selectedKey = null;
+let tickHandle = null;
+
+/* ---------- sound (WebAudio chiptune) ---------- */
+let AC = null;
+function beep(seq) {
+  if (S.muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    let t = AC.currentTime;
+    for (const [freq, dur] of seq) {
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = "square"; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.08, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(g); g.connect(AC.destination);
+      o.start(t); o.stop(t + dur);
+      t += dur * 0.9;
+    }
+  } catch {}
+}
+const SFX = {
+  select: () => beep([[660, .08]]),
+  start:  () => beep([[440, .1], [550, .1], [660, .15]]),
+  damage: () => beep([[220, .08], [180, .12]]),
+  clear:  () => beep([[523, .12], [659, .12], [784, .12], [1047, .25]]),
+  boss:   () => beep([[392, .15], [523, .15], [659, .15], [784, .15], [1047, .4]]),
+  levelup:() => beep([[523, .1], [587, .1], [659, .1], [698, .1], [784, .3]]),
+  ticket: () => beep([[880, .1], [1100, .2]])
+};
+
+/* ---------- sippy speech ---------- */
+const LINES = {
+  idle: ["どのクエストから倒すケロ？", "でかいタスクはボス戦。1セッションずつHPを削るケロ。", "「2分だけ」でいいから始めるのがコツだケロ。"],
+  fighting: ["集中中…！Sippyも応援してるケロ！", "その調子だケロ！", "敵がひるんでるケロ！"],
+  victory: ["やったケロ！！", "ナイスファイトだケロ！", "経験値ゲットだケロ！"],
+  comeback: ["おかえりケロ！1回倒せばストリーク復活するケロ！"]
+};
+function sippySay(kind) {
+  const arr = LINES[kind] || LINES.idle;
+  document.getElementById("sippySays").textContent = arr[Math.floor(Math.random() * arr.length)];
+}
+
+/* ---------- CSV parsing ---------- */
+function parseCSV(text) {
+  // BOM除去・改行正規化
+  text = text.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
+  const rows = [];
+  let row = [], cell = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; }
+        else inQ = false;
+      } else cell += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ",") { row.push(cell); cell = ""; }
+      else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+      else cell += c;
+    }
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim() !== ""));
+}
+
+const COL_ALIASES = {
+  title:    ["title", "task", "name", "subject", "タスク", "タスク名", "クエスト", "名前", "件名", "やること", "内容", "項目"],
+  estimate: ["estimate", "pomodoro", "pomodoros", "sessions", "hp", "見積", "見積り", "見積もり", "ポモドーロ", "セッション", "工数", "回数"],
+  priority: ["priority", "優先度", "重要度"],
+  due:      ["due", "deadline", "date", "期限", "締切", "締め切り", "期日", "日付"],
+  status:   ["status", "done", "state", "状態", "ステータス", "完了", "進捗"],
+  id:       ["id", "ＩＤ", "番号", "no", "no."]
+};
+function findCol(header, aliases) {
+  return header.findIndex(h => aliases.includes(h.trim().toLowerCase()) || aliases.includes(h.trim()));
+}
+function questKey(id, title) {
+  return id ? "id:" + id : "t:" + title;
+}
+function csvToQuests(text) {
+  const rows = parseCSV(text);
+  if (!rows.length) return [];
+  const header = rows[0].map(h => h.trim().toLowerCase());
+  const col = {};
+  let hasHeader = false;
+  for (const [k, aliases] of Object.entries(COL_ALIASES)) {
+    col[k] = findCol(header, aliases.map(a => a.toLowerCase()));
+    if (col[k] >= 0) hasHeader = true;
+  }
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  if (!hasHeader) { col.title = 0; col.estimate = -1; col.priority = -1; col.due = -1; col.status = -1; col.id = -1; }
+
+  const out = [];
+  for (const r of dataRows) {
+    const title = (r[col.title] || "").trim();
+    if (!title) continue;
+    const estRaw = col.estimate >= 0 ? (r[col.estimate] || "").trim() : "";
+    let hp = parseInt(estRaw, 10);
+    if (!Number.isFinite(hp) || hp < 1) hp = 1;
+    if (hp > 50) hp = 50;
+    const priRaw = col.priority >= 0 ? (r[col.priority] || "").trim().toLowerCase() : "";
+    const priority = /高|high|3|a|★★★/.test(priRaw) ? "high" : (/低|low|1|c|★$/.test(priRaw) ? "low" : "mid");
+    const due = col.due >= 0 ? (r[col.due] || "").trim() : "";
+    const stRaw = col.status >= 0 ? (r[col.status] || "").trim().toLowerCase() : "";
+    const doneInCsv = /完了|done|closed|済|✓|✔|100%/.test(stRaw);
+    const id = col.id >= 0 ? (r[col.id] || "").trim() : "";
+    out.push({ key: questKey(id, title), title, hp, priority, due, doneInCsv });
+  }
+  return out;
+}
+
+/* ---------- CSV loading ---------- */
+async function loadCsvFromRepo(silent) {
+  const st = document.getElementById("csvStatus");
+  try {
+    const res = await fetch("tasks.csv?ts=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    applyCsv(text, "tasks.csv（リポジトリ）");
+  } catch (e) {
+    if (S.csvCache) {
+      applyCsv(S.csvCache, S.csvSource + "（前回の記憶から復元）");
+    } else if (!silent) {
+      st.textContent = "まだクエストがないケロ。「CSVファイルを選ぶ」からタスクCSVを読み込んでね（スマホならOneDriveやGoogleドライブの中のファイルも選べるケロ）";
+    }
+  }
+}
+// 起動時は保存済みデータを最優先（読み込んだ実タスクがサンプル等で上書きされないように）
+function loadInitialCsv() {
+  if (S.csvCache) {
+    applyCsv(S.csvCache, (S.csvSource || "前回のデータ") + "（自動復元）");
+    return Promise.resolve();
+  }
+  return loadCsvFromRepo(false);
+}
+function applyCsv(text, sourceLabel) {
+  quests = csvToQuests(text);
+  S.csvCache = text;
+  S.csvSource = sourceLabel;
+  // CSV側で完了になっているものは討伐済みに同期
+  for (const q of quests) {
+    if (q.doneInCsv) {
+      const p = progressOf(q.key);
+      if (!p.done) { p.done = true; p.doneAt = Date.now(); S.quests[q.key] = p; }
+    }
+  }
+  save();
+  const st = document.getElementById("csvStatus");
+  const active = quests.filter(q => !progressOf(q.key).done).length;
+  st.textContent = `読み込み元: ${sourceLabel} ／ クエスト ${quests.length}件（挑戦可能 ${active}件）`;
+  renderQuests();
+}
+function progressOf(key) {
+  return S.quests[key] || { damage: 0, done: false, doneAt: null };
+}
+
+/* ---------- render ---------- */
+function xpNeeded(lvl) { return 100 + (lvl - 1) * 40; }
+
+function renderStatus() {
+  document.getElementById("lvl").textContent = S.lvl;
+  document.getElementById("sessions").textContent = S.sessions;
+  document.getElementById("streak").textContent = S.streak;
+  document.getElementById("streakState").textContent = S.streakFrozen ? "(凍結中: 今日1回で復活!)" : "";
+  const need = xpNeeded(S.lvl);
+  document.getElementById("xpTxt").textContent = `${S.xp} / ${need}`;
+  document.getElementById("xpBar").style.width = Math.min(100, S.xp / need * 100) + "%";
+  document.getElementById("tickets").textContent = S.tickets > 0 ? "🎟".repeat(Math.min(S.tickets, 10)) + (S.tickets > 10 ? " x" + S.tickets : "") : "なし";
+  document.getElementById("useTicketBtn").disabled = S.tickets < 1;
+}
+
+function priBadge(q) {
+  if (q.priority === "high") return '<span class="q-badge pri-high">優先:高</span>';
+  if (q.priority === "low") return '<span class="q-badge">優先:低</span>';
+  return "";
+}
+
+function renderQuests() {
+  const list = document.getElementById("questList");
+  const doneList = document.getElementById("doneList");
+  list.innerHTML = ""; doneList.innerHTML = "";
+  let doneCount = 0;
+
+  if (!quests.length) {
+    list.innerHTML = '<div class="empty-msg">クエストがまだないケロ。CSVを読み込んでね！</div>';
+  }
+
+  // 並び: ボス優先→優先度高→期限順
+  const active = quests.filter(q => !progressOf(q.key).done);
+  const prival = { high: 0, mid: 1, low: 2 };
+  active.sort((a, b) => (prival[a.priority] - prival[b.priority]) || (a.due || "9999").localeCompare(b.due || "9999"));
+
+  for (const q of active) {
+    const p = progressOf(q.key);
+    const isBoss = q.hp >= BOSS_MIN_HP;
+    const remain = q.hp - p.damage;
+    const el = document.createElement("div");
+    el.className = "quest" + (isBoss ? " boss" : "") + (q.key === selectedKey ? " selected" : "");
+    el.dataset.key = q.key;
+    el.innerHTML = `
+      <div class="q-head">
+        <div class="q-title">${isBoss ? "👹 " : "⚔ "}${escapeHtml(q.title)}</div>
+        <div>${isBoss ? '<span class="q-badge boss-badge">BOSS</span>' : ""}${priBadge(q)}</div>
+      </div>
+      <div class="q-meta">${q.due ? "📅 " + escapeHtml(q.due) : ""}<span>${q.hp}セッションで討伐</span></div>
+      <div class="q-hp-row">
+        <div class="bar bar-hp"><div style="width:${remain / q.hp * 100}%"></div></div>
+        <div class="q-hp-txt">HP ${remain}/${q.hp}</div>
+      </div>`;
+    el.addEventListener("click", () => selectQuest(q.key));
+    list.appendChild(el);
+  }
+
+  const done = quests.filter(q => progressOf(q.key).done)
+    .sort((a, b) => (progressOf(b.key).doneAt || 0) - (progressOf(a.key).doneAt || 0));
+  for (const q of done) {
+    doneCount++;
+    const el = document.createElement("div");
+    el.className = "quest done-q";
+    el.innerHTML = `<div class="q-head"><div class="q-title">✅ ${escapeHtml(q.title)}</div></div>`;
+    doneList.appendChild(el);
+  }
+  document.getElementById("doneWrap").style.display = doneCount ? "" : "none";
+
+  if (selectedKey && !active.some(q => q.key === selectedKey)) {
+    selectedKey = null;
+  }
+  renderFighting();
+}
+
+function renderFighting() {
+  const f = document.getElementById("fighting");
+  if (!selectedKey) { f.textContent = "↓ 下のリストから挑むクエストを選ぶ"; return; }
+  const q = quests.find(x => x.key === selectedKey);
+  if (q) f.textContent = "挑戦中: " + q.title;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ---------- quest selection ---------- */
+function selectQuest(key) {
+  if (S.timerEnd) return; // 戦闘中は変更不可
+  selectedKey = key;
+  SFX.select();
+  renderQuests();
+}
+
+/* ---------- timer ---------- */
+function fmt(sec) {
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+function renderTime() {
+  const timeEl = document.getElementById("time");
+  if (S.timerEnd) {
+    const remain = Math.max(0, Math.round((S.timerEnd - Date.now()) / 1000));
+    timeEl.textContent = fmt(remain);
+    timeEl.classList.add("running");
+    document.title = fmt(remain) + " ⚔ Sippy Quest";
+  } else {
+    timeEl.textContent = fmt(S.timerMin * 60);
+    timeEl.classList.remove("running");
+    document.title = "Sippy Quest | やる気クエスト";
+  }
+}
+function tick() {
+  renderTime();
+  if (S.timerEnd && Date.now() >= S.timerEnd) finishSession();
+}
+function startSession() {
+  if (S.timerEnd) return;
+  if (!selectedKey) {
+    document.getElementById("fighting").textContent = "⚠ まずクエストを選ぶケロ！";
+    document.querySelector(".timer-box").classList.add("shake");
+    setTimeout(() => document.querySelector(".timer-box").classList.remove("shake"), 500);
+    return;
+  }
+  S.timerEnd = Date.now() + S.timerMin * 60 * 1000;
+  S.timerQuest = selectedKey;
+  save();
+  SFX.start();
+  sippySay("fighting");
+  document.getElementById("startBtn").style.display = "none";
+  document.getElementById("giveUpBtn").style.display = "";
+  tickHandle = setInterval(tick, 500);
+  renderTime();
+}
+function giveUpSession() {
+  // 「にげる」はペナルティなし。責めない設計。
+  S.timerEnd = null; S.timerQuest = null;
+  save();
+  clearInterval(tickHandle);
+  document.getElementById("startBtn").style.display = "";
+  document.getElementById("giveUpBtn").style.display = "none";
+  document.getElementById("sippySays").textContent = "逃げるのも作戦のうちだケロ。また来ればいいケロ！";
+  renderTime();
+}
+function finishSession() {
+  clearInterval(tickHandle);
+  const qKey = S.timerQuest;
+  S.timerEnd = null; S.timerQuest = null;
+  document.getElementById("startBtn").style.display = "";
+  document.getElementById("giveUpBtn").style.display = "none";
+
+  // ダメージ処理
+  const q = quests.find(x => x.key === qKey);
+  let cleared = false, isBoss = false;
+  if (q) {
+    const p = progressOf(q.key);
+    p.damage++;
+    isBoss = q.hp >= BOSS_MIN_HP;
+    if (p.damage >= q.hp) { p.done = true; p.doneAt = Date.now(); cleared = true; }
+    S.quests[q.key] = p;
+  }
+
+  // XP・セッション・チケット
+  S.sessions++;
+  S.sessionsTowardTicket++;
+  let gotTicket = false;
+  if (S.sessionsTowardTicket >= SESSIONS_PER_TICKET) {
+    S.sessionsTowardTicket = 0;
+    S.tickets++;
+    gotTicket = true;
+  }
+  let gained = XP_PER_SESSION;
+  if (cleared) gained += isBoss ? XP_BOSS_CLEAR : XP_QUEST_CLEAR;
+  const leveled = gainXp(gained);
+
+  // ストリーク
+  touchStreak();
+
+  save();
+  renderStatus();
+  renderQuests();
+  renderTime();
+
+  // 演出
+  popDamage(qKey);
+  let title, msg;
+  if (cleared && isBoss) {
+    title = "BOSS撃破!!"; SFX.boss();
+    msg = `「${q.title}」を討伐した！\n+${gained} EXP`;
+    confetti(80);
+  } else if (cleared) {
+    title = "クエストクリア!"; SFX.clear();
+    msg = `「${q.title}」を討伐した！\n+${gained} EXP`;
+    confetti(40);
+  } else {
+    title = "ナイスアタック!"; SFX.clear();
+    msg = q ? `「${q.title}」に1ダメージ！ 残りHP ${q.hp - progressOf(q.key).damage}\n+${gained} EXP` : `+${gained} EXP`;
+  }
+  if (gotTicket) { msg += "\n\n🎟 ゲーム解禁チケットを手に入れた！"; SFX.ticket(); }
+  if (leveled) { msg += `\n\n⭐ レベルアップ！ Lv${S.lvl} になった！`; SFX.levelup(); confetti(60); }
+  showOverlay(title, msg);
+  sippySay("victory");
+}
+function gainXp(n) {
+  S.xp += n;
+  let leveled = false;
+  while (S.xp >= xpNeeded(S.lvl)) {
+    S.xp -= xpNeeded(S.lvl);
+    S.lvl++;
+    leveled = true;
+  }
+  return leveled;
+}
+
+/* ---------- streak（失敗に寛容な設計） ---------- */
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function daysBetween(a, b) {
+  return Math.round((new Date(b) - new Date(a)) / 86400000);
+}
+function checkStreakOnLoad() {
+  if (!S.lastActiveDate) return;
+  const gap = daysBetween(S.lastActiveDate, todayStr());
+  if (gap >= 2 && gap <= 3 && S.streak > 0) {
+    // 1〜2日サボり → 凍結（今日1回で復活）
+    S.streakFrozen = true;
+    sippySay("comeback");
+  } else if (gap > 3) {
+    // 長期離脱 → リセットするが責めない
+    S.streak = 0; S.streakFrozen = false;
+    document.getElementById("sippySays").textContent = "おかえりケロ！ここからまた始めればいいケロ。過去はノーカン！";
+  }
+  save();
+}
+function touchStreak() {
+  const today = todayStr();
+  if (S.lastActiveDate === today) return; // 今日はもうカウント済み
+  if (!S.lastActiveDate) {
+    S.streak = 1;
+  } else {
+    const gap = daysBetween(S.lastActiveDate, today);
+    if (gap === 1) S.streak++;
+    else if (S.streakFrozen) { S.streak++; S.streakFrozen = false; } // 復活！
+    else S.streak = 1;
+  }
+  S.lastActiveDate = today;
+}
+
+/* ---------- tickets ---------- */
+function useTicket() {
+  if (S.tickets < 1) return;
+  S.tickets--;
+  save();
+  renderStatus();
+  SFX.ticket();
+  showOverlay("ごほうびタイム!", "30分、思いっきり遊ぶケロ！\n罪悪感は置いていくこと。これは正式な報酬だケロ！", () => {
+    window.open(GAME_URL, "_blank");
+  });
+}
+
+/* ---------- fx ---------- */
+function popDamage(qKey) {
+  const el = document.querySelector(`.quest[data-key="${CSS.escape(qKey || "")}"]`);
+  if (!el) return;
+  const d = document.createElement("div");
+  d.className = "dmg-pop";
+  d.textContent = "-1 HIT!";
+  el.appendChild(d);
+  el.classList.add("shake");
+  setTimeout(() => { d.remove(); el.classList.remove("shake"); }, 1000);
+}
+function confetti(n) {
+  const colors = ["#ffd93d", "#6ee7b7", "#ff8fa3", "#6c5ce7", "#fff"];
+  for (let i = 0; i < n; i++) {
+    const p = document.createElement("div");
+    p.className = "confetti-piece";
+    p.style.left = Math.random() * 100 + "vw";
+    p.style.background = colors[i % colors.length];
+    p.style.animationDuration = (1.5 + Math.random() * 2) + "s";
+    p.style.animationDelay = Math.random() * 0.5 + "s";
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 4000);
+  }
+}
+let ovCallback = null;
+function showOverlay(title, msg, cb) {
+  document.getElementById("ovTitle").textContent = title;
+  document.getElementById("ovMsg").textContent = msg;
+  document.getElementById("overlay").classList.add("show");
+  ovCallback = cb || null;
+}
+
+/* ---------- events ---------- */
+document.getElementById("startBtn").addEventListener("click", startSession);
+document.getElementById("giveUpBtn").addEventListener("click", giveUpSession);
+document.getElementById("ovClose").addEventListener("click", () => {
+  document.getElementById("overlay").classList.remove("show");
+  if (ovCallback) { ovCallback(); ovCallback = null; }
+});
+document.getElementById("useTicketBtn").addEventListener("click", useTicket);
+document.getElementById("reloadCsvBtn").addEventListener("click", () => loadCsvFromRepo(false));
+document.getElementById("pickCsvBtn").addEventListener("click", () => document.getElementById("csvFile").click());
+document.getElementById("csvFile").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (f) f.text().then(t => applyCsv(t, f.name));
+});
+document.getElementById("lenBtns").addEventListener("click", e => {
+  const b = e.target.closest(".len-btn");
+  if (!b || S.timerEnd) return;
+  S.timerMin = parseInt(b.dataset.min, 10);
+  save();
+  document.querySelectorAll(".len-btn").forEach(x => x.classList.toggle("active", x === b));
+  renderTime();
+});
+document.getElementById("muteBtn").addEventListener("click", () => {
+  S.muted = !S.muted;
+  save();
+  document.getElementById("muteBtn").textContent = S.muted ? "♪ OFF" : "♪ ON";
+});
+
+// drag & drop
+let dragDepth = 0;
+document.body.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; document.body.classList.add("dragover"); });
+document.body.addEventListener("dragleave", e => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragover"); } });
+document.body.addEventListener("dragover", e => e.preventDefault());
+document.body.addEventListener("drop", e => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("dragover");
+  const f = e.dataTransfer.files[0];
+  if (f) f.text().then(t => applyCsv(t, f.name + "（ドロップ）"));
+});
+
+/* ---------- init ---------- */
+(function init() {
+  document.getElementById("muteBtn").textContent = S.muted ? "♪ OFF" : "♪ ON";
+  document.querySelectorAll(".len-btn").forEach(b => b.classList.toggle("active", parseInt(b.dataset.min, 10) === S.timerMin));
+  checkStreakOnLoad();
+  renderStatus();
+  renderQuests();
+  renderTime();
+
+  // 再読み込みでも戦闘中タイマーを復元
+  if (S.timerEnd && Date.now() >= S.timerEnd) {
+    // 閉じてる間にセッションが終わっていた → 成果をクレジットしてからCSV読み込み
+    loadInitialCsv().then(() => finishSession());
+  } else {
+    if (S.timerEnd) {
+      selectedKey = S.timerQuest;
+      document.getElementById("startBtn").style.display = "none";
+      document.getElementById("giveUpBtn").style.display = "";
+      tickHandle = setInterval(tick, 500);
+    }
+    loadInitialCsv();
+  }
+})();
+</script>
+</body>
+</html>
