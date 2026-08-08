@@ -442,7 +442,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "1.7.0";
+const APP_VERSION = "1.7.1";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -796,7 +796,8 @@ function renderQuests() {
     doneCount++;
     const el = document.createElement("div");
     el.className = "quest done-q";
-    el.innerHTML = `<div class="q-head"><div class="q-title">✅ ${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}</div></div>`;
+    el.innerHTML = `<div class="q-head"><div class="q-title">✅ ${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}</div><button class="q-done-btn" title="討伐を取り消してクエストボードに戻す">↩戻す</button></div>`;
+    el.querySelector(".q-done-btn").addEventListener("click", () => undoDone(q.key));
     doneList.appendChild(el);
   }
   document.getElementById("doneWrap").style.display = doneCount ? "" : "none";
@@ -996,6 +997,22 @@ function markDone(key) {
   if (leveled) { msg += `\n\n⭐ レベルアップ！ Lv${S.lvl} になった！`; SFX.levelup(); }
   showOverlay("討伐済み!", msg);
   sippySay("victory");
+}
+function undoDone(key) {
+  const q = quests.find(x => x.key === key);
+  if (!q) return;
+  const p = progressOf(key);
+  if (!p.done) return;
+  // 討伐を取り消してボードに戻す（残りHP1の状態から再開できるようにする）
+  p.done = false;
+  p.doneAt = null;
+  p.damage = Math.max(0, q.hp - 1);
+  S.quests[key] = p;
+  save();
+  renderQuests();
+  SFX.select();
+  showOverlay("討伐を取り消したケロ", `「${q.title}」をクエストボードに戻したよ。\n残りHP1から再開できるケロ！\n\n※ すでに tasks-done.csv を書き出して渡していた場合は、\nタスク管理側にも「このタスクは未完了に戻して」と伝えてね`);
+  sippySay("idle");
 }
 function gainXp(n) {
   S.xp += n;
