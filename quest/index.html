@@ -279,6 +279,8 @@
   @keyframes zoomin { from { transform: scale(.3); opacity: 0;} to { transform: scale(1); opacity: 1;} }
   .overlay h2 { font-size: 34px; color: var(--gold); text-shadow: 3px 3px 0 #000; letter-spacing: 4px; margin-bottom: 10px; }
   .overlay p { font-size: 15px; margin-bottom: 18px; white-space: pre-line; }
+  .conf-btns { display: flex; flex-direction: column; gap: 12px; align-items: center; margin-bottom: 14px; }
+  .conf-note { font-size: 11px !important; color: var(--text-dim); margin-bottom: 0 !important; }
   .dmg-pop {
     position: absolute;
     right: 14px; top: -6px;
@@ -418,6 +420,19 @@
   </div>
 </div>
 
+<div class="overlay" id="confirmOverlay">
+  <div class="overlay-inner">
+    <h2>タイムアップ！</h2>
+    <p id="confMsg"></p>
+    <div class="conf-btns">
+      <button class="btn" id="confClearBtn">👑 討伐完了！</button>
+      <button class="btn secondary" id="confExtendBtn">⏳ 延長してもう1戦</button>
+      <button class="btn secondary" id="confFleeBtn">🏃 一旦停止（にげる）</button>
+    </div>
+    <p class="conf-note">どれを選んでも今回のセッションの経験値はもらえるケロ</p>
+  </div>
+</div>
+
 <script>
 "use strict";
 
@@ -427,7 +442,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "1.6.0";
+const APP_VERSION = "1.7.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -445,6 +460,7 @@ function defaultState() {
     csvCache: null,      // 最後に読み込んだCSVテキスト（ドロップ分の復元用）
     csvSource: null,
     timerEnd: null, timerQuest: null, timerMin: 25,
+    pendingQuest: null,  // タイムアップ後、討伐確認待ちのクエスト
     muted: false
   };
 }
@@ -484,7 +500,8 @@ const SFX = {
   clear:  () => beep([[523, .12], [659, .12], [784, .12], [1047, .25]]),
   boss:   () => beep([[392, .15], [523, .15], [659, .15], [784, .15], [1047, .4]]),
   levelup:() => beep([[523, .1], [587, .1], [659, .1], [698, .1], [784, .3]]),
-  ticket: () => beep([[880, .1], [1100, .2]])
+  ticket: () => beep([[880, .1], [1100, .2]]),
+  timeup: () => beep([[784, .15], [659, .15], [784, .15], [1047, .35]])
 };
 
 /* ---------- sippy speech ---------- */
@@ -829,7 +846,42 @@ function renderTime() {
 }
 function tick() {
   renderTime();
-  if (S.timerEnd && Date.now() >= S.timerEnd) finishSession();
+  if (S.timerEnd && Date.now() >= S.timerEnd) enterConfirm();
+}
+
+/* ---------- タイムアップ後の討伐確認 ---------- */
+function enterConfirm() {
+  clearInterval(tickHandle);
+  S.pendingQuest = S.timerQuest;
+  S.timerEnd = null; S.timerQuest = null;
+  save();
+  setBattleButtons(false);
+  renderTime();
+  SFX.timeup();
+  showConfirmFor(S.pendingQuest);
+}
+function showConfirmFor(qKey) {
+  const q = quests.find(x => x.key === qKey);
+  document.getElementById("confMsg").textContent =
+    (q ? `「${q.title}」は討伐できたケロ？` : "討伐できたケロ？");
+  document.getElementById("confirmOverlay").classList.add("show");
+  document.getElementById("sippySays").textContent = "おつかれさま！実際のところどうだったケロ？";
+}
+function resolvePending(action) {
+  document.getElementById("confirmOverlay").classList.remove("show");
+  const qKey = S.pendingQuest;
+  S.pendingQuest = null;
+  save();
+  if (action === "clear") {
+    finishSession({ questKey: qKey, forceClear: true });
+  } else if (action === "extend") {
+    finishSession({ questKey: qKey, noClear: true });
+    selectedKey = qKey;
+    renderQuests();
+    startSession();
+  } else {
+    finishSession({ questKey: qKey, noClear: true });
+  }
 }
 function startSession() {
   if (S.timerEnd) return;
@@ -866,16 +918,18 @@ function giveUpSession() {
 function finishSession(opts) {
   opts = opts || {};
   clearInterval(tickHandle);
-  const qKey = S.timerQuest;
+  const qKey = opts.questKey !== undefined ? opts.questKey : S.timerQuest;
   S.timerEnd = null; S.timerQuest = null;
   setBattleButtons(false);
 
-  // ダメージ処理（早期討伐ならHPを全部削る）
+  // ダメージ処理: forceClear=討伐確定(HP全削り) / noClear=まだ終わっていない(討伐にはしない)
   const q = quests.find(x => x.key === qKey);
   let cleared = false, isBoss = false;
   if (q) {
     const p = progressOf(q.key);
-    p.damage = opts.forceClear ? q.hp : p.damage + 1;
+    if (opts.forceClear) p.damage = q.hp;
+    else if (opts.noClear) p.damage = Math.min(p.damage + 1, q.hp - 1);
+    else p.damage = p.damage + 1;
     isBoss = q.hp >= BOSS_MIN_HP;
     if (p.damage >= q.hp) { p.done = true; p.doneAt = Date.now(); cleared = true; }
     S.quests[q.key] = p;
@@ -1041,6 +1095,9 @@ document.getElementById("doneEarlyBtn").addEventListener("click", () => {
   finishSession({ forceClear: true });
 });
 document.getElementById("giveUpBtn").addEventListener("click", giveUpSession);
+document.getElementById("confClearBtn").addEventListener("click", () => resolvePending("clear"));
+document.getElementById("confExtendBtn").addEventListener("click", () => resolvePending("extend"));
+document.getElementById("confFleeBtn").addEventListener("click", () => resolvePending("flee"));
 document.getElementById("ovClose").addEventListener("click", () => {
   document.getElementById("overlay").classList.remove("show");
   if (ovCallback) { ovCallback(); ovCallback = null; }
@@ -1112,15 +1169,16 @@ document.body.addEventListener("drop", e => {
 
   // 再読み込みでも戦闘中タイマーを復元
   if (S.timerEnd && Date.now() >= S.timerEnd) {
-    // 閉じてる間にセッションが終わっていた → 成果をクレジットしてからCSV読み込み
-    loadInitialCsv().then(() => finishSession());
+    // 閉じてる間にタイムアップしていた → CSV読み込み後に討伐確認を出す
+    loadInitialCsv().then(() => enterConfirm());
   } else {
     if (S.timerEnd) {
       selectedKey = S.timerQuest;
       setBattleButtons(true);
       tickHandle = setInterval(tick, 500);
     }
-    loadInitialCsv();
+    // 討伐確認の途中でページを閉じていた場合も復元する
+    loadInitialCsv().then(() => { if (S.pendingQuest) showConfirmFor(S.pendingQuest); });
   }
 })();
 </script>
