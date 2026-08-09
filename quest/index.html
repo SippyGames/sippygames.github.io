@@ -280,6 +280,18 @@
   .overlay h2 { font-size: 34px; color: var(--gold); text-shadow: 3px 3px 0 #000; letter-spacing: 4px; margin-bottom: 10px; }
   .overlay p { font-size: 15px; margin-bottom: 18px; white-space: pre-line; }
   .conf-btns { display: flex; flex-direction: column; gap: 12px; align-items: center; margin-bottom: 14px; }
+  .adhoc-input {
+    font-family: inherit;
+    font-size: 15px;
+    width: min(320px, 80vw);
+    padding: 8px 10px;
+    background: #16112e;
+    color: var(--text);
+    border: 2px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 12px;
+  }
+  .adhoc-input:focus { outline: none; border-color: var(--gold); }
   .conf-note { font-size: 11px !important; color: var(--text-dim); margin-bottom: 0 !important; }
   .dmg-pop {
     position: absolute;
@@ -386,6 +398,9 @@
     <div class="panel-title">クエストボード</div>
     <div class="board-summary" id="boardSummary" style="display:none"></div>
     <div id="questList"></div>
+    <div style="text-align:center; margin-top:12px">
+      <button class="btn secondary" id="adhocBtn">⚡ 突発討伐を記録</button>
+    </div>
     <div id="doneWrap" style="display:none">
       <div class="panel-title" style="margin-top:14px">討伐済み</div>
       <div id="doneList"></div>
@@ -420,6 +435,22 @@
   </div>
 </div>
 
+<div class="overlay" id="adhocOverlay">
+  <div class="overlay-inner">
+    <h2>⚡ 突発クエスト</h2>
+    <p>リストにないタスクを倒したケロ？<br>討伐の記録を残すケロ！</p>
+    <input type="text" id="adhocTitle" class="adhoc-input" placeholder="例: 急な電話対応" maxlength="100">
+    <div class="timer-lens" id="adhocSize">
+      <button class="len-btn active" data-size="normal">⚔通常 +50</button>
+      <button class="len-btn" data-size="boss">👹BOSS級 +120</button>
+    </div>
+    <div class="conf-btns">
+      <button class="btn" id="adhocSubmit">討伐を記録！</button>
+      <button class="btn secondary" id="adhocCancel">やめる</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="confirmOverlay">
   <div class="overlay-inner">
     <h2>タイムアップ！</h2>
@@ -442,7 +473,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "1.7.1";
+const APP_VERSION = "1.8.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -461,6 +492,7 @@ function defaultState() {
     csvSource: null,
     timerEnd: null, timerQuest: null, timerMin: 25,
     pendingQuest: null,  // タイムアップ後、討伐確認待ちのクエスト
+    adhocQuests: [],     // ⚡突発クエスト（CSV外のタスク）
     muted: false
   };
 }
@@ -612,7 +644,11 @@ function loadInitialCsv() {
   return loadCsvFromRepo(false);
 }
 function applyCsv(text, sourceLabel) {
-  quests = csvToQuests(text);
+  const csvQuests = csvToQuests(text);
+  // タスク管理側のCSVに同名タスクが登場したら、突発クエストはそちらに吸収されたとみなす
+  const csvTitles = new Set(csvQuests.map(q => q.title));
+  S.adhocQuests = (S.adhocQuests || []).filter(a => !csvTitles.has(a.title));
+  quests = csvQuests.concat(S.adhocQuests);
   S.csvCache = text;
   S.csvSource = sourceLabel;
   // CSV側で完了になっているものは討伐済みに同期
@@ -685,6 +721,20 @@ function exportCsv() {
     }
   }
 
+  // ⚡突発クエスト（CSV外で討伐したタスク）は新規行として末尾に追加
+  let adhocCount = 0;
+  for (const a of (S.adhocQuests || [])) {
+    const p = progressOf(a.key);
+    if (!p.done) continue;
+    const row = new Array(Math.max(out[0].length, doneAtCol + 1)).fill("");
+    row[titleCol] = a.title;
+    row[statusCol] = "完了";
+    if (p.doneAt) row[doneAtCol] = fmtDateTime(p.doneAt);
+    out.push(row);
+    doneCount++;
+    adhocCount++;
+  }
+
   const csv = out.map(r =>
     r.map(c => /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c).join(",")
   ).join("\r\n");
@@ -697,7 +747,7 @@ function exportCsv() {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   document.getElementById("csvStatus").textContent =
-    `討伐結果を tasks-done.csv に書き出したケロ（完了 ${doneCount}件）。OneDriveのSippyQuestフォルダに保存すれば、タスク管理側が完了フラグを取り込んでくれるケロ。元のtasks.csvへの上書きはしないでね。`;
+    `討伐結果を tasks-done.csv に書き出したケロ（完了 ${doneCount}件${adhocCount ? "、うち⚡突発 " + adhocCount + "件" : ""}）。OneDriveのSippyQuestフォルダに保存すれば、タスク管理側が完了フラグを取り込んでくれるケロ。元のtasks.csvへの上書きはしないでね。`;
   SFX.ticket();
 }
 
@@ -796,7 +846,7 @@ function renderQuests() {
     doneCount++;
     const el = document.createElement("div");
     el.className = "quest done-q";
-    el.innerHTML = `<div class="q-head"><div class="q-title">✅ ${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}</div><button class="q-done-btn" title="討伐を取り消してクエストボードに戻す">↩戻す</button></div>`;
+    el.innerHTML = `<div class="q-head"><div class="q-title">✅ ${q.adhoc ? "⚡" : ""}${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}</div><button class="q-done-btn" title="討伐を取り消してクエストボードに戻す">↩戻す</button></div>`;
     el.querySelector(".q-done-btn").addEventListener("click", () => undoDone(q.key));
     doneList.appendChild(el);
   }
@@ -998,6 +1048,41 @@ function markDone(key) {
   showOverlay("討伐済み!", msg);
   sippySay("victory");
 }
+/* ---------- ⚡突発クエスト ---------- */
+let adhocSize = "normal";
+function openAdhoc() {
+  adhocSize = "normal";
+  document.querySelectorAll("#adhocSize .len-btn").forEach(b => b.classList.toggle("active", b.dataset.size === "normal"));
+  document.getElementById("adhocTitle").value = "";
+  document.getElementById("adhocOverlay").classList.add("show");
+  document.getElementById("adhocTitle").focus();
+}
+function submitAdhoc() {
+  const title = document.getElementById("adhocTitle").value.trim();
+  if (!title) {
+    document.getElementById("adhocTitle").classList.add("shake");
+    setTimeout(() => document.getElementById("adhocTitle").classList.remove("shake"), 500);
+    return;
+  }
+  document.getElementById("adhocOverlay").classList.remove("show");
+  const isBoss = adhocSize === "boss";
+  const q = { key: "adhoc:" + Date.now(), id: "", title, hp: isBoss ? BOSS_MIN_HP : 1, priority: "mid", due: "", adhoc: true };
+  S.adhocQuests.push(q);
+  S.quests[q.key] = { damage: q.hp, done: true, doneAt: Date.now() };
+  quests.push(q);
+  const gained = isBoss ? XP_BOSS_CLEAR : XP_QUEST_CLEAR;
+  const leveled = gainXp(gained);
+  save();
+  renderStatus();
+  renderQuests();
+  SFX.clear();
+  confetti(30);
+  let msg = `⚡「${title}」を討伐した！\n+${gained} EXP\n\n次の書き出しCSVにも記録されるケロ`;
+  if (leveled) { msg += `\n\n⭐ レベルアップ！ Lv${S.lvl} になった！`; SFX.levelup(); }
+  showOverlay("突発討伐!", msg);
+  sippySay("victory");
+}
+
 function undoDone(key) {
   const q = quests.find(x => x.key === key);
   if (!q) return;
@@ -1112,6 +1197,16 @@ document.getElementById("doneEarlyBtn").addEventListener("click", () => {
   finishSession({ forceClear: true });
 });
 document.getElementById("giveUpBtn").addEventListener("click", giveUpSession);
+document.getElementById("adhocBtn").addEventListener("click", openAdhoc);
+document.getElementById("adhocCancel").addEventListener("click", () => document.getElementById("adhocOverlay").classList.remove("show"));
+document.getElementById("adhocSubmit").addEventListener("click", submitAdhoc);
+document.getElementById("adhocTitle").addEventListener("keydown", e => { if (e.key === "Enter") submitAdhoc(); });
+document.getElementById("adhocSize").addEventListener("click", e => {
+  const b = e.target.closest(".len-btn");
+  if (!b) return;
+  adhocSize = b.dataset.size;
+  document.querySelectorAll("#adhocSize .len-btn").forEach(x => x.classList.toggle("active", x === b));
+});
 document.getElementById("confClearBtn").addEventListener("click", () => resolvePending("clear"));
 document.getElementById("confExtendBtn").addEventListener("click", () => resolvePending("extend"));
 document.getElementById("confFleeBtn").addEventListener("click", () => resolvePending("flee"));
@@ -1180,6 +1275,7 @@ document.body.addEventListener("drop", e => {
   document.getElementById("muteBtn").textContent = S.muted ? "♪ OFF" : "♪ ON";
   document.querySelectorAll(".len-btn").forEach(b => b.classList.toggle("active", parseInt(b.dataset.min, 10) === S.timerMin));
   checkStreakOnLoad();
+  quests = (S.adhocQuests || []).slice(); // CSV読み込み前でも突発クエストは表示
   renderStatus();
   renderQuests();
   renderTime();
