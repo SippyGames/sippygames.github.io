@@ -215,6 +215,26 @@
   .q-hp-row .bar { flex: 1; margin-top: 0; }
   .q-hp-txt { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
   .battle-hint { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+  #battleList { margin-top: 14px; text-align: left; }
+  .battle-card {
+    background: var(--bg2);
+    border: 2px solid var(--gold-dark);
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 0 8px #ffd93d33;
+  }
+  .b-names { font-size: 13px; margin-bottom: 8px; }
+  .b-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .b-time {
+    font-size: 24px;
+    color: var(--gold);
+    text-shadow: 2px 2px 0 #000;
+    letter-spacing: 2px;
+    animation: pulse 2s ease-in-out infinite;
+    margin-right: auto;
+  }
+  .b-row .btn { font-size: 13px; padding: 6px 12px; }
   .q-done-btn {
     font-family: inherit;
     background: var(--panel-light);
@@ -269,6 +289,8 @@
   .board-summary b { color: var(--gold); font-size: 16px; }
   .board-summary .rec-count b { color: var(--xp); }
   .q-badge.rec-badge { background: #14532d; color: #86efac; }
+  .q-badge.battle-badge { background: var(--gold-dark); color: #241d47; }
+  .quest.in-battle { border-color: var(--gold-dark); opacity: .8; }
 
   /* ===== tickets ===== */
   .ticket-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -421,9 +443,8 @@
       <button class="len-btn" data-min="45">45分</button>
     </div>
     <button class="btn" id="startBtn">たたかう！</button>
-    <button class="btn" id="doneEarlyBtn" style="display:none">👑 討伐完了！</button>
-    <button class="btn secondary" id="giveUpBtn" style="display:none">にげる</button>
-    <div class="battle-hint" id="battleHint" style="display:none">タイマーより早く終わったら「討伐完了！」で即勝利だケロ</div>
+    <div class="battle-hint">AI待ちなどのスキマ時間は、別のクエストを選んでもう一戦——並行討伐OKだケロ</div>
+    <div id="battleList"></div>
   </div>
 
   <!-- ===== tickets ===== -->
@@ -534,7 +555,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -551,9 +572,9 @@ function defaultState() {
     quests: {},          // key -> {damage, done, doneAt}
     csvCache: null,      // 最後に読み込んだCSVテキスト（ドロップ分の復元用）
     csvSource: null,
-    timerEnd: null, timerQuests: [], timerStart: null, timerMin: 25,
-    pendingQuests: [],   // タイムアップ後、討伐確認待ちのクエスト
-    pendingMinutes: 0,   // 確認待ちセッションの戦闘時間（分）
+    timerMin: 25,
+    battles: [],         // 進行中の戦闘 [{id, keys, start, end, min}] — 並行可
+    pendingReports: [],  // 戦果報告待ちキュー [{keys, minutes}]
     adhocQuests: [],     // ⚡突発クエスト（CSV外のタスク）
     muted: false
   };
@@ -562,10 +583,17 @@ let S = load();
 function load() {
   try {
     const s = Object.assign(defaultState(), JSON.parse(localStorage.getItem(LS_KEY) || "{}"));
-    // 旧バージョン(単一クエスト戦闘)からの移行
-    if (s.timerQuest && !s.timerQuests.length) s.timerQuests = [s.timerQuest];
-    if (s.pendingQuest && !s.pendingQuests.length) s.pendingQuests = [s.pendingQuest];
-    delete s.timerQuest; delete s.pendingQuest;
+    // 旧バージョン(単一タイマー)からの移行
+    if (s.timerQuest && !(s.timerQuests || []).length) s.timerQuests = [s.timerQuest];
+    if (s.timerEnd && (s.timerQuests || []).length) {
+      s.battles.push({ id: "mig" + s.timerEnd, keys: s.timerQuests, start: s.timerStart || (s.timerEnd - (s.timerMin || 25) * 60000), end: s.timerEnd, min: s.timerMin || 25 });
+    }
+    if (s.pendingQuest && !(s.pendingQuests || []).length) s.pendingQuests = [s.pendingQuest];
+    if ((s.pendingQuests || []).length) {
+      s.pendingReports.push({ keys: s.pendingQuests, minutes: s.pendingMinutes || s.timerMin || 25 });
+    }
+    delete s.timerEnd; delete s.timerStart; delete s.timerQuest; delete s.timerQuests;
+    delete s.pendingQuest; delete s.pendingQuests; delete s.pendingMinutes;
     return s;
   }
   catch { return defaultState(); }
@@ -914,12 +942,13 @@ function renderQuests() {
     const isBoss = q.hp >= BOSS_MIN_HP;
     const remain = q.hp - p.damage;
     const el = document.createElement("div");
-    el.className = "quest" + (isBoss ? " boss" : "") + (selectedKeys.includes(q.key) ? " selected" : "");
+    const inBattle = questInBattle(q.key);
+    el.className = "quest" + (isBoss ? " boss" : "") + (selectedKeys.includes(q.key) ? " selected" : "") + (inBattle ? " in-battle" : "");
     el.dataset.key = q.key;
     el.innerHTML = `
       <div class="q-head">
         <div class="q-title">${isBoss ? "👹 " : "⚔ "}${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}</div>
-        <div>${isRecommendedToday(q) ? '<span class="q-badge rec-badge">⭐今日</span>' : ""}${isBoss ? '<span class="q-badge boss-badge">BOSS</span>' : ""}${priBadge(q)}<button class="q-done-btn" title="戦わずに討伐済みにする">✓済</button></div>
+        <div>${inBattle ? '<span class="q-badge battle-badge">⚔戦闘中</span>' : ""}${isRecommendedToday(q) ? '<span class="q-badge rec-badge">⭐今日</span>' : ""}${isBoss ? '<span class="q-badge boss-badge">BOSS</span>' : ""}${priBadge(q)}<button class="q-done-btn" title="戦わずに討伐済みにする">✓済</button></div>
       </div>
       <div class="q-meta">${q.due ? "📅 " + escapeHtml(q.due) : ""}<span>${q.hp}セッションで討伐</span>${p.minutes ? `<span>⏱累計${p.minutes}分</span>` : ""}</div>
       <div class="q-hp-row">
@@ -955,7 +984,7 @@ function renderFighting() {
     const q = quests.find(x => x.key === k);
     return q ? (q.id ? "[" + q.id + "] " : "") + q.title : "";
   }).filter(Boolean);
-  const head = (S.timerEnd ? "挑戦中" : "選択中") + (names.length > 1 ? `(${names.length}件)` : "") + ": ";
+  const head = "選択中" + (names.length > 1 ? `(${names.length}件)` : "") + ": ";
   f.textContent = head + names.join(" ／ ");
 }
 
@@ -964,8 +993,12 @@ function escapeHtml(s) {
 }
 
 /* ---------- quest selection（タップで複数選択） ---------- */
+function questInBattle(key) {
+  return S.battles.some(b => b.keys.includes(key)) ||
+         S.pendingReports.some(r => r.keys.includes(key));
+}
 function toggleSelect(key) {
-  if (S.timerEnd || S.pendingQuests.length) return; // 戦闘中・戦果報告中は変更不可
+  if (questInBattle(key)) return; // 戦闘中・戦果報告待ちのクエストは選択不可
   const i = selectedKeys.indexOf(key);
   if (i >= 0) selectedKeys.splice(i, 1);
   else selectedKeys.push(key);
@@ -979,40 +1012,107 @@ function fmt(sec) {
   return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
 }
 function renderTime() {
+  // 大時計は「次の戦闘の長さ」。タブタイトルは最短で終わる戦闘の残り時間
   const timeEl = document.getElementById("time");
-  if (S.timerEnd) {
-    const remain = Math.max(0, Math.round((S.timerEnd - Date.now()) / 1000));
-    timeEl.textContent = fmt(remain);
-    timeEl.classList.add("running");
-    document.title = fmt(remain) + " ⚔ Sippy Quest";
+  timeEl.textContent = fmt(S.timerMin * 60);
+  if (S.battles.length) {
+    const soonest = Math.min(...S.battles.map(b => b.end));
+    document.title = fmt(Math.max(0, Math.round((soonest - Date.now()) / 1000))) + " ⚔ Sippy Quest";
   } else {
-    timeEl.textContent = fmt(S.timerMin * 60);
-    timeEl.classList.remove("running");
     document.title = "Sippy Quest | やる気クエスト";
   }
 }
+function ensureTick() {
+  if (!tickHandle && S.battles.length) tickHandle = setInterval(tick, 500);
+}
 function tick() {
+  const now = Date.now();
+  const expired = S.battles.filter(b => now >= b.end);
+  if (expired.length) {
+    S.battles = S.battles.filter(b => now < b.end);
+    for (const b of expired) S.pendingReports.push({ keys: b.keys, minutes: b.min });
+    save();
+    SFX.timeup();
+    renderBattles();
+    renderQuests();
+    maybeOpenReport();
+  }
+  updateBattleTimes();
   renderTime();
-  if (S.timerEnd && Date.now() >= S.timerEnd) enterConfirm(S.timerMin);
+  if (!S.battles.length && tickHandle) { clearInterval(tickHandle); tickHandle = null; }
 }
 
-/* ---------- タイムアップ／早期終了後の戦果報告 ---------- */
-function enterConfirm(minutes) {
-  clearInterval(tickHandle);
-  S.pendingQuests = (S.timerQuests || []).slice();
-  S.pendingMinutes = minutes;
-  S.timerEnd = null; S.timerQuests = []; S.timerStart = null;
-  save();
-  setBattleButtons(false);
-  renderTime();
-  SFX.timeup();
-  openBattleReport();
+/* ---------- 進行中の戦闘リスト ---------- */
+function renderBattles() {
+  const wrap = document.getElementById("battleList");
+  wrap.innerHTML = "";
+  for (const b of S.battles) {
+    const names = b.keys.map(k => {
+      const q = quests.find(x => x.key === k);
+      return q ? (q.id ? "[" + q.id + "] " : "") + q.title : "";
+    }).filter(Boolean).join(" ／ ");
+    const card = document.createElement("div");
+    card.className = "battle-card";
+    card.innerHTML = `
+      <div class="b-names">⚔ ${escapeHtml(names || "クエスト")}</div>
+      <div class="b-row">
+        <span class="b-time" data-bid="${b.id}">--:--</span>
+        <button class="btn b-done">👑 討伐完了</button>
+        <button class="btn secondary b-flee">🏃 にげる</button>
+      </div>`;
+    card.querySelector(".b-done").addEventListener("click", () => earlyFinish(b.id));
+    card.querySelector(".b-flee").addEventListener("click", () => fleeBattle(b.id));
+    wrap.appendChild(card);
+  }
+  updateBattleTimes();
 }
-function openBattleReport() {
-  if (!S.pendingQuests.length) return;
+function updateBattleTimes() {
+  const now = Date.now();
+  for (const b of S.battles) {
+    const el = document.querySelector(`.b-time[data-bid="${CSS.escape(b.id)}"]`);
+    if (el) el.textContent = fmt(Math.max(0, Math.round((b.end - now) / 1000)));
+  }
+}
+function earlyFinish(bid) {
+  const b = S.battles.find(x => x.id === bid);
+  if (!b) return;
+  const minutes = Math.max(1, Math.round((Date.now() - b.start) / 60000));
+  S.battles = S.battles.filter(x => x.id !== bid);
+  save();
+  renderBattles();
+  if (b.keys.length === 1) {
+    // 単独戦闘は即討伐（従来どおり）
+    settleBattle(b.keys, b.keys, minutes);
+  } else {
+    S.pendingReports.push({ keys: b.keys, minutes });
+    save();
+    renderQuests();
+    maybeOpenReport();
+  }
+}
+function fleeBattle(bid) {
+  // 「にげる」はペナルティなし。責めない設計。
+  S.battles = S.battles.filter(x => x.id !== bid);
+  save();
+  renderBattles();
+  renderQuests();
+  renderTime();
+  document.getElementById("sippySays").textContent = "逃げるのも作戦のうちだケロ。また来ればいいケロ！";
+}
+
+/* ---------- 戦果報告（キューで順に処理） ---------- */
+let reportOpen = false;
+function maybeOpenReport() {
+  if (reportOpen || !S.pendingReports.length) return;
+  // 報酬オーバーレイが開いている間は、それを閉じたタイミングで開く
+  if (document.getElementById("overlay").classList.contains("show")) return;
+  reportOpen = true;
+  openBattleReport(S.pendingReports[0]);
+}
+function openBattleReport(rep) {
   document.getElementById("sippySays").textContent = "おつかれさま！実際のところどうだったケロ？";
-  if (S.pendingQuests.length === 1) {
-    const q = quests.find(x => x.key === S.pendingQuests[0]);
+  if (rep.keys.length === 1) {
+    const q = quests.find(x => x.key === rep.keys[0]);
     document.getElementById("confMsg").textContent =
       (q ? `「${q.title}」は討伐できたケロ？` : "討伐できたケロ？");
     document.getElementById("confirmOverlay").classList.add("show");
@@ -1021,7 +1121,7 @@ function openBattleReport() {
   // 複数クエスト: 討伐できたものにチェックして申告
   const list = document.getElementById("multiList");
   list.innerHTML = "";
-  for (const k of S.pendingQuests) {
+  for (const k of rep.keys) {
     const q = quests.find(x => x.key === k);
     if (!q) continue;
     const label = document.createElement("label");
@@ -1046,32 +1146,30 @@ function openBattleReport() {
 }
 function resolvePending(action) {
   document.getElementById("confirmOverlay").classList.remove("show");
-  const keys = S.pendingQuests.slice();
-  const minutes = S.pendingMinutes || S.timerMin;
-  S.pendingQuests = []; S.pendingMinutes = 0;
+  const rep = S.pendingReports.shift() || { keys: [], minutes: S.timerMin };
+  reportOpen = false;
   save();
-  const k = keys[0];
+  const k = rep.keys[0];
   if (action === "clear") {
-    settleBattle(keys, [k], minutes);
+    settleBattle(rep.keys, [k], rep.minutes);
   } else if (action === "extend") {
-    settleBattle(keys, [], minutes);
+    settleBattle(rep.keys, [], rep.minutes);
     selectedKeys = [k];
     renderQuests();
     startSession();
   } else {
-    settleBattle(keys, [], minutes);
+    settleBattle(rep.keys, [], rep.minutes);
   }
 }
 function resolveMulti(extend) {
   const checked = [...document.querySelectorAll("#multiList input:checked")].map(i => i.value);
   document.getElementById("multiOverlay").classList.remove("show");
-  const keys = S.pendingQuests.slice();
-  const minutes = S.pendingMinutes || S.timerMin;
-  S.pendingQuests = []; S.pendingMinutes = 0;
+  const rep = S.pendingReports.shift() || { keys: [], minutes: S.timerMin };
+  reportOpen = false;
   save();
-  settleBattle(keys, checked, minutes);
+  settleBattle(rep.keys, checked, rep.minutes);
   if (extend) {
-    const remaining = keys.filter(k => !checked.includes(k) && !progressOf(k).done);
+    const remaining = rep.keys.filter(k => !checked.includes(k) && !progressOf(k).done);
     if (remaining.length) {
       selectedKeys = remaining;
       renderQuests();
@@ -1080,44 +1178,30 @@ function resolveMulti(extend) {
   }
 }
 function startSession() {
-  if (S.timerEnd) return;
-  if (!selectedKeys.length) {
+  const keys = selectedKeys.filter(k => !questInBattle(k));
+  if (!keys.length) {
     document.getElementById("fighting").textContent = "⚠ まずクエストを選ぶケロ！（タップで複数選択もOK）";
     document.querySelector(".timer-box").classList.add("shake");
     setTimeout(() => document.querySelector(".timer-box").classList.remove("shake"), 500);
     return;
   }
-  S.timerEnd = Date.now() + S.timerMin * 60 * 1000;
-  S.timerStart = Date.now();
-  S.timerQuests = selectedKeys.slice();
+  S.battles.push({
+    id: "b" + Date.now() + "-" + Math.floor(Math.random() * 10000),
+    keys,
+    start: Date.now(),
+    end: Date.now() + S.timerMin * 60 * 1000,
+    min: S.timerMin
+  });
+  selectedKeys = [];
   save();
   SFX.start();
   sippySay("fighting");
-  setBattleButtons(true);
-  tickHandle = setInterval(tick, 500);
+  ensureTick();
+  renderBattles();
+  renderQuests();
   renderTime();
-  renderFighting();
-}
-function setBattleButtons(inBattle) {
-  document.getElementById("startBtn").style.display = inBattle ? "none" : "";
-  document.getElementById("doneEarlyBtn").style.display = inBattle ? "" : "none";
-  document.getElementById("giveUpBtn").style.display = inBattle ? "" : "none";
-  document.getElementById("battleHint").style.display = inBattle ? "" : "none";
-}
-function giveUpSession() {
-  // 「にげる」はペナルティなし。責めない設計。
-  S.timerEnd = null; S.timerQuests = []; S.timerStart = null;
-  save();
-  clearInterval(tickHandle);
-  setBattleButtons(false);
-  document.getElementById("sippySays").textContent = "逃げるのも作戦のうちだケロ。また来ればいいケロ！";
-  renderTime();
-  renderFighting();
 }
 function settleBattle(keys, clearedKeys, minutes) {
-  clearInterval(tickHandle);
-  S.timerEnd = null; S.timerQuests = []; S.timerStart = null;
-  setBattleButtons(false);
 
   // 各クエストへ反映。戦闘時間(分)は参加クエストで均等割り
   const perMinutes = keys.length ? Math.max(1, Math.round(minutes / keys.length)) : 0;
@@ -1179,7 +1263,7 @@ function settleBattle(keys, clearedKeys, minutes) {
   sippySay("victory");
 }
 function markDone(key) {
-  if (S.timerEnd) return; // 戦闘中は不可
+  if (questInBattle(key)) return; // 戦闘中・戦果報告待ちは不可
   const q = quests.find(x => x.key === key);
   if (!q) return;
   const p = progressOf(key);
@@ -1345,19 +1429,6 @@ function showOverlay(title, msg, cb) {
 
 /* ---------- events ---------- */
 document.getElementById("startBtn").addEventListener("click", startSession);
-document.getElementById("doneEarlyBtn").addEventListener("click", () => {
-  if (!S.timerEnd) return;
-  const minutes = Math.max(1, Math.round((Date.now() - (S.timerStart || Date.now())) / 60000));
-  if (S.timerQuests.length === 1) {
-    // 単独戦闘は即討伐（従来どおり）
-    const keys = S.timerQuests.slice();
-    settleBattle(keys, keys, minutes);
-  } else {
-    // 複数戦闘はどれを倒せたかチェックで申告
-    enterConfirm(minutes);
-  }
-});
-document.getElementById("giveUpBtn").addEventListener("click", giveUpSession);
 document.getElementById("questSearch").addEventListener("input", e => {
   searchTerm = e.target.value.trim().toLowerCase();
   document.getElementById("searchClear").style.display = searchTerm ? "" : "none";
@@ -1387,6 +1458,7 @@ document.getElementById("multiExtendBtn").addEventListener("click", () => resolv
 document.getElementById("ovClose").addEventListener("click", () => {
   document.getElementById("overlay").classList.remove("show");
   if (ovCallback) { ovCallback(); ovCallback = null; }
+  maybeOpenReport(); // 溜まっている戦果報告があれば続けて開く
 });
 document.getElementById("useTicketBtn").addEventListener("click", useTicket);
 document.getElementById("reloadCsvBtn").addEventListener("click", () => loadCsvFromRepo(false));
@@ -1398,7 +1470,7 @@ document.getElementById("csvFile").addEventListener("change", e => {
 });
 document.getElementById("lenBtns").addEventListener("click", e => {
   const b = e.target.closest(".len-btn");
-  if (!b || S.timerEnd) return;
+  if (!b) return;
   S.timerMin = parseInt(b.dataset.min, 10);
   save();
   document.querySelectorAll(".len-btn").forEach(x => x.classList.toggle("active", x === b));
@@ -1454,19 +1526,22 @@ document.body.addEventListener("drop", e => {
   renderQuests();
   renderTime();
 
-  // 再読み込みでも戦闘中タイマーを復元
-  if (S.timerEnd && Date.now() >= S.timerEnd) {
-    // 閉じてる間にタイムアップしていた → CSV読み込み後に戦果報告を出す
-    loadInitialCsv().then(() => enterConfirm(S.timerMin));
-  } else {
-    if (S.timerEnd) {
-      selectedKeys = (S.timerQuests || []).slice();
-      setBattleButtons(true);
-      tickHandle = setInterval(tick, 500);
+  // 再読み込みでも進行中の戦闘と戦果報告を復元
+  loadInitialCsv().then(() => {
+    // 閉じている間にタイムアップした戦闘を戦果報告キューへ
+    const now = Date.now();
+    const expired = S.battles.filter(b => now >= b.end);
+    if (expired.length) {
+      S.battles = S.battles.filter(b => now < b.end);
+      for (const b of expired) S.pendingReports.push({ keys: b.keys, minutes: b.min });
+      save();
     }
-    // 戦果報告の途中でページを閉じていた場合も復元する
-    loadInitialCsv().then(() => { if (S.pendingQuests.length) openBattleReport(); });
-  }
+    ensureTick();
+    renderBattles();
+    renderQuests();
+    renderTime();
+    maybeOpenReport();
+  });
 })();
 </script>
 </body>
