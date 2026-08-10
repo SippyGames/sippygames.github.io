@@ -304,6 +304,25 @@
   .overlay h2 { font-size: 34px; color: var(--gold); text-shadow: 3px 3px 0 #000; letter-spacing: 4px; margin-bottom: 10px; }
   .overlay p { font-size: 15px; margin-bottom: 18px; white-space: pre-line; }
   .conf-btns { display: flex; flex-direction: column; gap: 12px; align-items: center; margin-bottom: 14px; }
+  .multi-list {
+    max-width: min(360px, 85vw);
+    margin: 0 auto 16px;
+    text-align: left;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+  .multi-item {
+    display: block;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .multi-item.checked { border-color: var(--gold); background: var(--panel-light); }
+  .multi-item input { accent-color: var(--gold); margin-right: 4px; transform: scale(1.2); pointer-events: none; }
   .adhoc-input {
     font-family: inherit;
     font-size: 15px;
@@ -468,6 +487,7 @@
     <h2>⚡ 突発クエスト</h2>
     <p>リストにないタスクを倒したケロ？<br>討伐の記録を残すケロ！</p>
     <input type="text" id="adhocTitle" class="adhoc-input" placeholder="例: 急な電話対応" maxlength="100">
+    <input type="number" id="adhocMin" class="adhoc-input" placeholder="かかった時間・分（任意）" min="1" max="999">
     <div class="timer-lens" id="adhocSize">
       <button class="len-btn active" data-size="normal">⚔通常 +50</button>
       <button class="len-btn" data-size="boss">👹BOSS級 +120</button>
@@ -492,6 +512,19 @@
   </div>
 </div>
 
+<div class="overlay" id="multiOverlay">
+  <div class="overlay-inner">
+    <h2>戦果報告</h2>
+    <p>討伐できたクエストにチェックするケロ！</p>
+    <div class="multi-list" id="multiList"></div>
+    <div class="conf-btns">
+      <button class="btn" id="multiEndBtn">✅ 記録して終了</button>
+      <button class="btn secondary" id="multiExtendBtn">⏳ 残りを延長してもう1戦</button>
+    </div>
+    <p class="conf-note">チェックなしでも戦闘時間と経験値は記録されるケロ</p>
+  </div>
+</div>
+
 <script>
 "use strict";
 
@@ -501,7 +534,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "1.9.0";
+const APP_VERSION = "2.0.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -518,21 +551,29 @@ function defaultState() {
     quests: {},          // key -> {damage, done, doneAt}
     csvCache: null,      // 最後に読み込んだCSVテキスト（ドロップ分の復元用）
     csvSource: null,
-    timerEnd: null, timerQuest: null, timerMin: 25,
-    pendingQuest: null,  // タイムアップ後、討伐確認待ちのクエスト
+    timerEnd: null, timerQuests: [], timerStart: null, timerMin: 25,
+    pendingQuests: [],   // タイムアップ後、討伐確認待ちのクエスト
+    pendingMinutes: 0,   // 確認待ちセッションの戦闘時間（分）
     adhocQuests: [],     // ⚡突発クエスト（CSV外のタスク）
     muted: false
   };
 }
 let S = load();
 function load() {
-  try { return Object.assign(defaultState(), JSON.parse(localStorage.getItem(LS_KEY) || "{}")); }
+  try {
+    const s = Object.assign(defaultState(), JSON.parse(localStorage.getItem(LS_KEY) || "{}"));
+    // 旧バージョン(単一クエスト戦闘)からの移行
+    if (s.timerQuest && !s.timerQuests.length) s.timerQuests = [s.timerQuest];
+    if (s.pendingQuest && !s.pendingQuests.length) s.pendingQuests = [s.pendingQuest];
+    delete s.timerQuest; delete s.pendingQuest;
+    return s;
+  }
   catch { return defaultState(); }
 }
 function save() { localStorage.setItem(LS_KEY, JSON.stringify(S)); }
 
 let quests = [];        // CSV由来のクエスト定義（進捗はS.questsとマージ）
-let selectedKey = null;
+let selectedKeys = [];  // 複数選択可
 let tickHandle = null;
 
 /* ---------- sound (WebAudio chiptune) ---------- */
@@ -607,6 +648,7 @@ const COL_ALIASES = {
   due:      ["due", "deadline", "date", "期限", "締切", "締め切り", "期日", "日付"],
   status:   ["status", "done", "state", "状態", "ステータス", "完了", "進捗"],
   doneAt:   ["完了日時", "完了日", "completed_at", "done_at", "completed", "完了時刻"],
+  duration: ["所要時間(分)", "所要時間", "時間(分)", "実績分", "minutes", "duration"],
   id:       ["id", "ＩＤ", "番号", "no", "no."]
 };
 function findCol(header, aliases) {
@@ -693,7 +735,7 @@ function applyCsv(text, sourceLabel) {
   renderQuests();
 }
 function progressOf(key) {
-  return S.quests[key] || { damage: 0, done: false, doneAt: null };
+  return S.quests[key] || { damage: 0, done: false, doneAt: null, minutes: 0 };
 }
 
 /* ---------- CSV export（討伐結果をCSVに反映して書き出す） ---------- */
@@ -721,16 +763,20 @@ function exportCsv() {
   }
   const titleCol = hasHeader && col.title >= 0 ? col.title : 0;
   const idCol = hasHeader ? col.id : -1;
-  let statusCol, doneAtCol;
+  let statusCol, doneAtCol, durationCol;
   if (hasHeader) {
     statusCol = col.status;
     if (statusCol < 0) { statusCol = out[0].length; out[0].push("状態"); }
     doneAtCol = col.doneAt;
     if (doneAtCol < 0) { doneAtCol = out[0].length; out[0].push("完了日時"); }
+    durationCol = col.duration;
+    if (durationCol < 0) { durationCol = out[0].length; out[0].push("所要時間(分)"); }
   } else {
     statusCol = Math.max(...out.map(r => r.length));
     doneAtCol = statusCol + 1;
+    durationCol = statusCol + 2;
   }
+  const lastCol = Math.max(statusCol, doneAtCol, durationCol);
 
   let doneCount = 0;
   const start = hasHeader ? 1 : 0;
@@ -739,8 +785,10 @@ function exportCsv() {
     const title = (r[titleCol] || "").trim();
     if (!title) continue;
     const id = idCol >= 0 ? (r[idCol] || "").trim() : "";
-    while (r.length <= Math.max(statusCol, doneAtCol)) r.push("");
+    while (r.length <= lastCol) r.push("");
     const p = progressOf(questKey(id, title));
+    // 戦闘時間は未討伐タスクの分も記録する（タスク管理側が既に記録した値は上書きしない）
+    if (p.minutes && !(r[durationCol] || "").trim()) r[durationCol] = String(p.minutes);
     if (p.done) {
       r[statusCol] = "完了";
       doneCount++;
@@ -754,10 +802,11 @@ function exportCsv() {
   for (const a of (S.adhocQuests || [])) {
     const p = progressOf(a.key);
     if (!p.done) continue;
-    const row = new Array(Math.max(out[0].length, doneAtCol + 1)).fill("");
+    const row = new Array(Math.max(out[0].length, lastCol + 1)).fill("");
     row[titleCol] = a.title;
     row[statusCol] = "完了";
     if (p.doneAt) row[doneAtCol] = fmtDateTime(p.doneAt);
+    if (p.minutes) row[durationCol] = String(p.minutes);
     out.push(row);
     doneCount++;
     adhocCount++;
@@ -865,21 +914,21 @@ function renderQuests() {
     const isBoss = q.hp >= BOSS_MIN_HP;
     const remain = q.hp - p.damage;
     const el = document.createElement("div");
-    el.className = "quest" + (isBoss ? " boss" : "") + (q.key === selectedKey ? " selected" : "");
+    el.className = "quest" + (isBoss ? " boss" : "") + (selectedKeys.includes(q.key) ? " selected" : "");
     el.dataset.key = q.key;
     el.innerHTML = `
       <div class="q-head">
         <div class="q-title">${isBoss ? "👹 " : "⚔ "}${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}</div>
         <div>${isRecommendedToday(q) ? '<span class="q-badge rec-badge">⭐今日</span>' : ""}${isBoss ? '<span class="q-badge boss-badge">BOSS</span>' : ""}${priBadge(q)}<button class="q-done-btn" title="戦わずに討伐済みにする">✓済</button></div>
       </div>
-      <div class="q-meta">${q.due ? "📅 " + escapeHtml(q.due) : ""}<span>${q.hp}セッションで討伐</span></div>
+      <div class="q-meta">${q.due ? "📅 " + escapeHtml(q.due) : ""}<span>${q.hp}セッションで討伐</span>${p.minutes ? `<span>⏱累計${p.minutes}分</span>` : ""}</div>
       <div class="q-hp-row">
         <div class="bar bar-hp"><div style="width:${remain / q.hp * 100}%"></div></div>
         <div class="q-hp-txt">HP ${remain}/${q.hp}</div>
       </div>`;
     el.addEventListener("click", e => {
       if (e.target.closest(".q-done-btn")) { markDone(q.key); return; }
-      selectQuest(q.key);
+      toggleSelect(q.key);
     });
     list.appendChild(el);
   }
@@ -888,33 +937,38 @@ function renderQuests() {
     doneCount++;
     const el = document.createElement("div");
     el.className = "quest done-q";
-    el.innerHTML = `<div class="q-head"><div class="q-title">✅ ${q.adhoc ? "⚡" : ""}${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}</div><button class="q-done-btn" title="討伐を取り消してクエストボードに戻す">↩戻す</button></div>`;
+    const dMins = progressOf(q.key).minutes;
+    el.innerHTML = `<div class="q-head"><div class="q-title">✅ ${q.adhoc ? "⚡" : ""}${q.id ? '<span class="q-id">' + escapeHtml(q.id) + '</span> ' : ""}${escapeHtml(q.title)}${dMins ? ' <span class="q-badge">⏱' + dMins + '分</span>' : ""}</div><button class="q-done-btn" title="討伐を取り消してクエストボードに戻す">↩戻す</button></div>`;
     el.querySelector(".q-done-btn").addEventListener("click", () => undoDone(q.key));
     doneList.appendChild(el);
   }
   document.getElementById("doneWrap").style.display = doneCount ? "" : "none";
 
-  if (selectedKey && !active.some(q => q.key === selectedKey)) {
-    selectedKey = null;
-  }
+  selectedKeys = selectedKeys.filter(k => active.some(q => q.key === k));
   renderFighting();
 }
 
 function renderFighting() {
   const f = document.getElementById("fighting");
-  if (!selectedKey) { f.textContent = "↓ 下のリストから挑むクエストを選ぶ"; return; }
-  const q = quests.find(x => x.key === selectedKey);
-  if (q) f.textContent = "挑戦中: " + (q.id ? "[" + q.id + "] " : "") + q.title;
+  if (!selectedKeys.length) { f.textContent = "↓ 下のリストから挑むクエストを選ぶ（複数選択OK）"; return; }
+  const names = selectedKeys.map(k => {
+    const q = quests.find(x => x.key === k);
+    return q ? (q.id ? "[" + q.id + "] " : "") + q.title : "";
+  }).filter(Boolean);
+  const head = (S.timerEnd ? "挑戦中" : "選択中") + (names.length > 1 ? `(${names.length}件)` : "") + ": ";
+  f.textContent = head + names.join(" ／ ");
 }
 
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-/* ---------- quest selection ---------- */
-function selectQuest(key) {
-  if (S.timerEnd) return; // 戦闘中は変更不可
-  selectedKey = key;
+/* ---------- quest selection（タップで複数選択） ---------- */
+function toggleSelect(key) {
+  if (S.timerEnd || S.pendingQuests.length) return; // 戦闘中・戦果報告中は変更不可
+  const i = selectedKeys.indexOf(key);
+  if (i >= 0) selectedKeys.splice(i, 1);
+  else selectedKeys.push(key);
   SFX.select();
   renderQuests();
 }
@@ -939,59 +993,110 @@ function renderTime() {
 }
 function tick() {
   renderTime();
-  if (S.timerEnd && Date.now() >= S.timerEnd) enterConfirm();
+  if (S.timerEnd && Date.now() >= S.timerEnd) enterConfirm(S.timerMin);
 }
 
-/* ---------- タイムアップ後の討伐確認 ---------- */
-function enterConfirm() {
+/* ---------- タイムアップ／早期終了後の戦果報告 ---------- */
+function enterConfirm(minutes) {
   clearInterval(tickHandle);
-  S.pendingQuest = S.timerQuest;
-  S.timerEnd = null; S.timerQuest = null;
+  S.pendingQuests = (S.timerQuests || []).slice();
+  S.pendingMinutes = minutes;
+  S.timerEnd = null; S.timerQuests = []; S.timerStart = null;
   save();
   setBattleButtons(false);
   renderTime();
   SFX.timeup();
-  showConfirmFor(S.pendingQuest);
+  openBattleReport();
 }
-function showConfirmFor(qKey) {
-  const q = quests.find(x => x.key === qKey);
-  document.getElementById("confMsg").textContent =
-    (q ? `「${q.title}」は討伐できたケロ？` : "討伐できたケロ？");
-  document.getElementById("confirmOverlay").classList.add("show");
+function openBattleReport() {
+  if (!S.pendingQuests.length) return;
   document.getElementById("sippySays").textContent = "おつかれさま！実際のところどうだったケロ？";
+  if (S.pendingQuests.length === 1) {
+    const q = quests.find(x => x.key === S.pendingQuests[0]);
+    document.getElementById("confMsg").textContent =
+      (q ? `「${q.title}」は討伐できたケロ？` : "討伐できたケロ？");
+    document.getElementById("confirmOverlay").classList.add("show");
+    return;
+  }
+  // 複数クエスト: 討伐できたものにチェックして申告
+  const list = document.getElementById("multiList");
+  list.innerHTML = "";
+  for (const k of S.pendingQuests) {
+    const q = quests.find(x => x.key === k);
+    if (!q) continue;
+    const label = document.createElement("label");
+    label.className = "multi-item";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = k;
+    cb.tabIndex = -1;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(
+      ` ${q.hp >= BOSS_MIN_HP ? "👹" : "⚔"} ${q.id ? "[" + q.id + "] " : ""}${q.title}`));
+    // ラベル側で明示的にトグル（環境によるチェックボックスの二重トグルを防ぐ）
+    label.addEventListener("click", e => {
+      e.preventDefault();
+      cb.checked = !cb.checked;
+      label.classList.toggle("checked", cb.checked);
+      SFX.select();
+    });
+    list.appendChild(label);
+  }
+  document.getElementById("multiOverlay").classList.add("show");
 }
 function resolvePending(action) {
   document.getElementById("confirmOverlay").classList.remove("show");
-  const qKey = S.pendingQuest;
-  S.pendingQuest = null;
+  const keys = S.pendingQuests.slice();
+  const minutes = S.pendingMinutes || S.timerMin;
+  S.pendingQuests = []; S.pendingMinutes = 0;
   save();
+  const k = keys[0];
   if (action === "clear") {
-    finishSession({ questKey: qKey, forceClear: true });
+    settleBattle(keys, [k], minutes);
   } else if (action === "extend") {
-    finishSession({ questKey: qKey, noClear: true });
-    selectedKey = qKey;
+    settleBattle(keys, [], minutes);
+    selectedKeys = [k];
     renderQuests();
     startSession();
   } else {
-    finishSession({ questKey: qKey, noClear: true });
+    settleBattle(keys, [], minutes);
+  }
+}
+function resolveMulti(extend) {
+  const checked = [...document.querySelectorAll("#multiList input:checked")].map(i => i.value);
+  document.getElementById("multiOverlay").classList.remove("show");
+  const keys = S.pendingQuests.slice();
+  const minutes = S.pendingMinutes || S.timerMin;
+  S.pendingQuests = []; S.pendingMinutes = 0;
+  save();
+  settleBattle(keys, checked, minutes);
+  if (extend) {
+    const remaining = keys.filter(k => !checked.includes(k) && !progressOf(k).done);
+    if (remaining.length) {
+      selectedKeys = remaining;
+      renderQuests();
+      startSession();
+    }
   }
 }
 function startSession() {
   if (S.timerEnd) return;
-  if (!selectedKey) {
-    document.getElementById("fighting").textContent = "⚠ まずクエストを選ぶケロ！";
+  if (!selectedKeys.length) {
+    document.getElementById("fighting").textContent = "⚠ まずクエストを選ぶケロ！（タップで複数選択もOK）";
     document.querySelector(".timer-box").classList.add("shake");
     setTimeout(() => document.querySelector(".timer-box").classList.remove("shake"), 500);
     return;
   }
   S.timerEnd = Date.now() + S.timerMin * 60 * 1000;
-  S.timerQuest = selectedKey;
+  S.timerStart = Date.now();
+  S.timerQuests = selectedKeys.slice();
   save();
   SFX.start();
   sippySay("fighting");
   setBattleButtons(true);
   tickHandle = setInterval(tick, 500);
   renderTime();
+  renderFighting();
 }
 function setBattleButtons(inBattle) {
   document.getElementById("startBtn").style.display = inBattle ? "none" : "";
@@ -1001,34 +1106,43 @@ function setBattleButtons(inBattle) {
 }
 function giveUpSession() {
   // 「にげる」はペナルティなし。責めない設計。
-  S.timerEnd = null; S.timerQuest = null;
+  S.timerEnd = null; S.timerQuests = []; S.timerStart = null;
   save();
   clearInterval(tickHandle);
   setBattleButtons(false);
   document.getElementById("sippySays").textContent = "逃げるのも作戦のうちだケロ。また来ればいいケロ！";
   renderTime();
+  renderFighting();
 }
-function finishSession(opts) {
-  opts = opts || {};
+function settleBattle(keys, clearedKeys, minutes) {
   clearInterval(tickHandle);
-  const qKey = opts.questKey !== undefined ? opts.questKey : S.timerQuest;
-  S.timerEnd = null; S.timerQuest = null;
+  S.timerEnd = null; S.timerQuests = []; S.timerStart = null;
   setBattleButtons(false);
 
-  // ダメージ処理: forceClear=討伐確定(HP全削り) / noClear=まだ終わっていない(討伐にはしない)
-  const q = quests.find(x => x.key === qKey);
-  let cleared = false, isBoss = false;
-  if (q) {
-    const p = progressOf(q.key);
-    if (opts.forceClear) p.damage = q.hp;
-    else if (opts.noClear) p.damage = Math.min(p.damage + 1, q.hp - 1);
-    else p.damage = p.damage + 1;
-    isBoss = q.hp >= BOSS_MIN_HP;
-    if (p.damage >= q.hp) { p.done = true; p.doneAt = Date.now(); cleared = true; }
-    S.quests[q.key] = p;
+  // 各クエストへ反映。戦闘時間(分)は参加クエストで均等割り
+  const perMinutes = keys.length ? Math.max(1, Math.round(minutes / keys.length)) : 0;
+  const clearedList = [];
+  let bossCleared = false;
+  for (const k of keys) {
+    const q = quests.find(x => x.key === k);
+    if (!q) continue;
+    const p = progressOf(k);
+    p.minutes = (p.minutes || 0) + perMinutes;
+    if (clearedKeys.includes(k)) {
+      p.damage = q.hp;
+      p.done = true;
+      p.doneAt = Date.now();
+      clearedList.push(q);
+      if (q.hp >= BOSS_MIN_HP) bossCleared = true;
+    } else {
+      // 討伐にはしない（HPは最大でも残り1まで削る）
+      p.damage = Math.min(p.damage + 1, q.hp - 1);
+      popDamage(k);
+    }
+    S.quests[k] = p;
   }
 
-  // XP・セッション・チケット
+  // セッション報酬（1セッションにつき1回）+ 討伐ボーナス
   S.sessions++;
   S.sessionsTowardTicket++;
   let gotTicket = false;
@@ -1038,10 +1152,8 @@ function finishSession(opts) {
     gotTicket = true;
   }
   let gained = XP_PER_SESSION;
-  if (cleared) gained += isBoss ? XP_BOSS_CLEAR : XP_QUEST_CLEAR;
+  for (const q of clearedList) gained += q.hp >= BOSS_MIN_HP ? XP_BOSS_CLEAR : XP_QUEST_CLEAR;
   const leveled = gainXp(gained);
-
-  // ストリーク
   touchStreak();
 
   save();
@@ -1050,19 +1162,16 @@ function finishSession(opts) {
   renderTime();
 
   // 演出
-  popDamage(qKey);
   let title, msg;
-  if (cleared && isBoss) {
-    title = "BOSS撃破!!"; SFX.boss();
-    msg = `「${q.title}」を討伐した！\n+${gained} EXP`;
-    confetti(80);
-  } else if (cleared) {
-    title = "クエストクリア!"; SFX.clear();
-    msg = `「${q.title}」を討伐した！\n+${gained} EXP`;
-    confetti(40);
+  if (clearedList.length) {
+    title = bossCleared ? "BOSS撃破!!" : (clearedList.length > 1 ? "まとめて討伐!!" : "クエストクリア!");
+    (bossCleared ? SFX.boss : SFX.clear)();
+    confetti(bossCleared || clearedList.length > 1 ? 80 : 40);
+    msg = clearedList.map(q => `「${q.title}」を討伐！`).join("\n") + `\n+${gained} EXP（⏱${minutes}分）`;
   } else {
-    title = "ナイスアタック!"; SFX.clear();
-    msg = q ? `「${q.title}」に1ダメージ！ 残りHP ${q.hp - progressOf(q.key).damage}\n+${gained} EXP` : `+${gained} EXP`;
+    title = "ナイスファイト!";
+    SFX.clear();
+    msg = `⏱${minutes}分の戦闘を記録した！\n+${gained} EXP`;
   }
   if (gotTicket) { msg += "\n\n🎟 ゲーム解禁チケットを手に入れた！"; SFX.ticket(); }
   if (leveled) { msg += `\n\n⭐ レベルアップ！ Lv${S.lvl} になった！`; SFX.levelup(); confetti(60); }
@@ -1096,6 +1205,7 @@ function openAdhoc() {
   adhocSize = "normal";
   document.querySelectorAll("#adhocSize .len-btn").forEach(b => b.classList.toggle("active", b.dataset.size === "normal"));
   document.getElementById("adhocTitle").value = "";
+  document.getElementById("adhocMin").value = "";
   document.getElementById("adhocOverlay").classList.add("show");
   document.getElementById("adhocTitle").focus();
 }
@@ -1108,9 +1218,10 @@ function submitAdhoc() {
   }
   document.getElementById("adhocOverlay").classList.remove("show");
   const isBoss = adhocSize === "boss";
+  const mins = parseInt(document.getElementById("adhocMin").value, 10);
   const q = { key: "adhoc:" + Date.now(), id: "", title, hp: isBoss ? BOSS_MIN_HP : 1, priority: "mid", due: "", adhoc: true };
   S.adhocQuests.push(q);
-  S.quests[q.key] = { damage: q.hp, done: true, doneAt: Date.now() };
+  S.quests[q.key] = { damage: q.hp, done: true, doneAt: Date.now(), minutes: Number.isFinite(mins) && mins > 0 ? mins : 0 };
   quests.push(q);
   const gained = isBoss ? XP_BOSS_CLEAR : XP_QUEST_CLEAR;
   const leveled = gainXp(gained);
@@ -1236,7 +1347,15 @@ function showOverlay(title, msg, cb) {
 document.getElementById("startBtn").addEventListener("click", startSession);
 document.getElementById("doneEarlyBtn").addEventListener("click", () => {
   if (!S.timerEnd) return;
-  finishSession({ forceClear: true });
+  const minutes = Math.max(1, Math.round((Date.now() - (S.timerStart || Date.now())) / 60000));
+  if (S.timerQuests.length === 1) {
+    // 単独戦闘は即討伐（従来どおり）
+    const keys = S.timerQuests.slice();
+    settleBattle(keys, keys, minutes);
+  } else {
+    // 複数戦闘はどれを倒せたかチェックで申告
+    enterConfirm(minutes);
+  }
 });
 document.getElementById("giveUpBtn").addEventListener("click", giveUpSession);
 document.getElementById("questSearch").addEventListener("input", e => {
@@ -1263,6 +1382,8 @@ document.getElementById("adhocSize").addEventListener("click", e => {
 document.getElementById("confClearBtn").addEventListener("click", () => resolvePending("clear"));
 document.getElementById("confExtendBtn").addEventListener("click", () => resolvePending("extend"));
 document.getElementById("confFleeBtn").addEventListener("click", () => resolvePending("flee"));
+document.getElementById("multiEndBtn").addEventListener("click", () => resolveMulti(false));
+document.getElementById("multiExtendBtn").addEventListener("click", () => resolveMulti(true));
 document.getElementById("ovClose").addEventListener("click", () => {
   document.getElementById("overlay").classList.remove("show");
   if (ovCallback) { ovCallback(); ovCallback = null; }
@@ -1335,16 +1456,16 @@ document.body.addEventListener("drop", e => {
 
   // 再読み込みでも戦闘中タイマーを復元
   if (S.timerEnd && Date.now() >= S.timerEnd) {
-    // 閉じてる間にタイムアップしていた → CSV読み込み後に討伐確認を出す
-    loadInitialCsv().then(() => enterConfirm());
+    // 閉じてる間にタイムアップしていた → CSV読み込み後に戦果報告を出す
+    loadInitialCsv().then(() => enterConfirm(S.timerMin));
   } else {
     if (S.timerEnd) {
-      selectedKey = S.timerQuest;
+      selectedKeys = (S.timerQuests || []).slice();
       setBattleButtons(true);
       tickHandle = setInterval(tick, 500);
     }
-    // 討伐確認の途中でページを閉じていた場合も復元する
-    loadInitialCsv().then(() => { if (S.pendingQuest) showConfirmFor(S.pendingQuest); });
+    // 戦果報告の途中でページを閉じていた場合も復元する
+    loadInitialCsv().then(() => { if (S.pendingQuests.length) openBattleReport(); });
   }
 })();
 </script>
