@@ -168,6 +168,35 @@
   .btn.secondary { background: var(--panel-light); color: var(--text); border-color: var(--border); font-size: 13px; padding: 6px 14px; }
   .btn:disabled { filter: grayscale(1) brightness(.7); cursor: not-allowed; }
 
+  /* ===== daily routines ===== */
+  .routine-note { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
+  .routine-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .routine-chip {
+    font-family: inherit;
+    background: var(--bg2);
+    color: var(--text);
+    border: 2px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 8px;
+    font-size: 14px;
+    cursor: pointer;
+    text-align: center;
+    transition: transform .1s;
+  }
+  .routine-chip:active { transform: scale(.96); }
+  .routine-chip .r-icon { font-size: 22px; display: block; margin-bottom: 2px; }
+  .routine-chip .r-count { display: block; font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+  .routine-chip.done {
+    background: linear-gradient(180deg, #1d4a35, #14532d);
+    border-color: var(--xp);
+    color: #bbf7d0;
+  }
+  .routine-chip.done .r-label::after { content: " ✓"; color: var(--xp); }
+
   /* ===== quests ===== */
   .quest {
     background: var(--bg2);
@@ -457,6 +486,13 @@
     </div>
   </div>
 
+  <!-- ===== daily routines ===== -->
+  <div class="panel">
+    <div class="panel-title">デイリールーチン</div>
+    <div class="routine-note">毎日リセット。やったらタップだケロ（+20 EXP、全部やると+30ボーナス！）</div>
+    <div class="routine-grid" id="routineGrid"></div>
+  </div>
+
   <!-- ===== quests ===== -->
   <div class="panel">
     <div class="panel-title">クエストボード</div>
@@ -555,7 +591,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -563,6 +599,14 @@ const XP_QUEST_CLEAR = 50;
 const XP_BOSS_CLEAR = 120;
 const BOSS_MIN_HP = 3;
 const GAME_URL = "../games/battle-island/";
+const XP_ROUTINE = 20;
+const XP_ROUTINE_PERFECT = 30;
+const ROUTINES = [
+  { id: "cook",    icon: "🍳", label: "料理" },
+  { id: "laundry", icon: "🧺", label: "洗濯" },
+  { id: "dishes",  icon: "🍽️", label: "食器洗い" },
+  { id: "kids",    icon: "🚸", label: "子供の送迎" }
+];
 
 /* ---------- state ---------- */
 function defaultState() {
@@ -576,6 +620,7 @@ function defaultState() {
     battles: [],         // 進行中の戦闘 [{id, keys, start, end, min}] — 並行可
     pendingReports: [],  // 戦果報告待ちキュー [{keys, minutes}]
     adhocQuests: [],     // ⚡突発クエスト（CSV外のタスク）
+    routines: { date: null, doneToday: [], counts: {}, perfectAwarded: false },
     muted: false
   };
 }
@@ -1383,6 +1428,71 @@ function touchStreak() {
   S.lastActiveDate = today;
 }
 
+/* ---------- デイリールーチン（家事など、毎日リセット） ---------- */
+function rolloverRoutines() {
+  const today = todayStr();
+  if (S.routines.date !== today) {
+    S.routines.date = today;
+    S.routines.doneToday = [];
+    S.routines.perfectAwarded = false;
+    save();
+  }
+}
+function toggleRoutine(id) {
+  rolloverRoutines();
+  const r = S.routines;
+  const i = r.doneToday.indexOf(id);
+  const def = ROUTINES.find(x => x.id === id);
+  if (i >= 0) {
+    // タップ取り消し（誤タップ用）。XPも同額戻す
+    r.doneToday.splice(i, 1);
+    r.counts[id] = Math.max(0, (r.counts[id] || 0) - 1);
+    S.xp = Math.max(0, S.xp - XP_ROUTINE);
+    SFX.select();
+  } else {
+    r.doneToday.push(id);
+    r.counts[id] = (r.counts[id] || 0) + 1;
+    let gained = XP_ROUTINE;
+    let perfect = false;
+    if (r.doneToday.length === ROUTINES.length && !r.perfectAwarded) {
+      r.perfectAwarded = true;
+      gained += XP_ROUTINE_PERFECT;
+      perfect = true;
+    }
+    const leveled = gainXp(gained);
+    touchStreak();
+    SFX.clear();
+    if (perfect) {
+      confetti(50);
+      let msg = `今日のルーチン全制覇！えらいケロ！\n+${gained} EXP（全制覇ボーナス +${XP_ROUTINE_PERFECT} 込み）`;
+      if (leveled) { msg += `\n\n⭐ レベルアップ！ Lv${S.lvl} になった！`; SFX.levelup(); }
+      showOverlay("パーフェクト!", msg);
+      sippySay("victory");
+    } else if (leveled) {
+      SFX.levelup();
+      confetti(40);
+      showOverlay("レベルアップ!", `${def ? def.label : ""} +${gained} EXP\n⭐ Lv${S.lvl} になった！`);
+    }
+  }
+  save();
+  renderRoutines();
+  renderStatus();
+}
+function renderRoutines() {
+  rolloverRoutines();
+  const grid = document.getElementById("routineGrid");
+  grid.innerHTML = "";
+  for (const r of ROUTINES) {
+    const done = S.routines.doneToday.includes(r.id);
+    const count = S.routines.counts[r.id] || 0;
+    const btn = document.createElement("button");
+    btn.className = "routine-chip" + (done ? " done" : "");
+    btn.innerHTML = `<span class="r-icon">${r.icon}</span><span class="r-label">${r.label}</span><span class="r-count">累計 ${count}回</span>`;
+    btn.addEventListener("click", () => toggleRoutine(r.id));
+    grid.appendChild(btn);
+  }
+}
+
 /* ---------- tickets ---------- */
 function useTicket() {
   if (S.tickets < 1) return;
@@ -1523,8 +1633,13 @@ document.body.addEventListener("drop", e => {
   checkStreakOnLoad();
   quests = (S.adhocQuests || []).slice(); // CSV読み込み前でも突発クエストは表示
   renderStatus();
+  renderRoutines();
   renderQuests();
   renderTime();
+  // 開きっぱなしで日付をまたいだ場合もルーチンをリセット
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) renderRoutines();
+  });
 
   // 再読み込みでも進行中の戦闘と戦果報告を復元
   loadInitialCsv().then(() => {
