@@ -231,6 +231,30 @@
   .quest.done-q:hover { transform: none; }
   .quest.done-q .q-title { text-decoration: line-through; }
   .empty-msg { color: var(--text-dim); font-size: 13px; text-align: center; padding: 12px 0; }
+  .search-row { position: relative; margin-bottom: 10px; }
+  .search-input {
+    font-family: inherit;
+    font-size: 14px;
+    width: 100%;
+    padding: 8px 34px 8px 10px;
+    background: #16112e;
+    color: var(--text);
+    border: 2px solid var(--border);
+    border-radius: 4px;
+  }
+  .search-input:focus { outline: none; border-color: var(--gold); }
+  .search-clear {
+    position: absolute; right: 6px; top: 50%;
+    transform: translateY(-50%);
+    background: var(--panel-light);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 2px 7px;
+    cursor: pointer;
+  }
   .board-summary {
     background: #16112e;
     border: 2px solid var(--border);
@@ -396,6 +420,10 @@
   <!-- ===== quests ===== -->
   <div class="panel">
     <div class="panel-title">クエストボード</div>
+    <div class="search-row">
+      <input type="text" id="questSearch" class="search-input" placeholder="🔍 クエスト検索（名前・ID）" autocomplete="off">
+      <button class="search-clear" id="searchClear" style="display:none" title="検索をクリア">✕</button>
+    </div>
     <div class="board-summary" id="boardSummary" style="display:none"></div>
     <div id="questList"></div>
     <div style="text-align:center; margin-top:12px">
@@ -473,7 +501,7 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.9.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
@@ -776,7 +804,7 @@ function isRecommendedToday(q) {
   return dueStr <= todayStr();
 }
 
-function renderBoardSummary(active) {
+function renderBoardSummary(active, hitCount) {
   const el = document.getElementById("boardSummary");
   if (!quests.length) { el.style.display = "none"; return; }
   el.style.display = "";
@@ -791,7 +819,15 @@ function renderBoardSummary(active) {
     `<span>残り <b>${active.length}</b>件</span>` +
     `<span>👹BOSS <b>${bosses}</b></span>` +
     `<span>⚔通常 <b>${normals}</b></span>` +
-    `<span class="rec-count">⭐今日の推奨 <b>${rec}</b></span>`;
+    `<span class="rec-count">⭐今日の推奨 <b>${rec}</b></span>` +
+    (hitCount !== null ? `<span>🔍検索ヒット <b>${hitCount}</b>件</span>` : "");
+}
+
+/* ---------- クエスト検索 ---------- */
+let searchTerm = "";
+function matchesSearch(q) {
+  if (!searchTerm) return true;
+  return (q.title + " " + (q.id || "")).toLowerCase().includes(searchTerm);
 }
 
 function priBadge(q) {
@@ -814,9 +850,17 @@ function renderQuests() {
   const active = quests.filter(q => !progressOf(q.key).done);
   const prival = { high: 0, mid: 1, low: 2 };
   active.sort((a, b) => (prival[a.priority] - prival[b.priority]) || (a.due || "9999").localeCompare(b.due || "9999"));
-  renderBoardSummary(active);
+  const shownActive = active.filter(matchesSearch);
+  const doneAll = quests.filter(q => progressOf(q.key).done)
+    .sort((a, b) => (progressOf(b.key).doneAt || 0) - (progressOf(a.key).doneAt || 0));
+  const shownDone = doneAll.filter(matchesSearch);
+  renderBoardSummary(active, searchTerm ? shownActive.length + shownDone.length : null);
 
-  for (const q of active) {
+  if (quests.length && searchTerm && !shownActive.length) {
+    list.innerHTML = `<div class="empty-msg">「${escapeHtml(searchTerm)}」に合う未討伐クエストはないケロ</div>`;
+  }
+
+  for (const q of shownActive) {
     const p = progressOf(q.key);
     const isBoss = q.hp >= BOSS_MIN_HP;
     const remain = q.hp - p.damage;
@@ -840,9 +884,7 @@ function renderQuests() {
     list.appendChild(el);
   }
 
-  const done = quests.filter(q => progressOf(q.key).done)
-    .sort((a, b) => (progressOf(b.key).doneAt || 0) - (progressOf(a.key).doneAt || 0));
-  for (const q of done) {
+  for (const q of shownDone) {
     doneCount++;
     const el = document.createElement("div");
     el.className = "quest done-q";
@@ -1197,6 +1239,17 @@ document.getElementById("doneEarlyBtn").addEventListener("click", () => {
   finishSession({ forceClear: true });
 });
 document.getElementById("giveUpBtn").addEventListener("click", giveUpSession);
+document.getElementById("questSearch").addEventListener("input", e => {
+  searchTerm = e.target.value.trim().toLowerCase();
+  document.getElementById("searchClear").style.display = searchTerm ? "" : "none";
+  renderQuests();
+});
+document.getElementById("searchClear").addEventListener("click", () => {
+  document.getElementById("questSearch").value = "";
+  searchTerm = "";
+  document.getElementById("searchClear").style.display = "none";
+  renderQuests();
+});
 document.getElementById("adhocBtn").addEventListener("click", openAdhoc);
 document.getElementById("adhocCancel").addEventListener("click", () => document.getElementById("adhocOverlay").classList.remove("show"));
 document.getElementById("adhocSubmit").addEventListener("click", submitAdhoc);
