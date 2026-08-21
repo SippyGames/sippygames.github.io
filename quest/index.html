@@ -323,6 +323,25 @@
 
   /* ===== tickets ===== */
   .ticket-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .play-box {
+    margin-top: 12px;
+    background: linear-gradient(180deg, #1d4a35, #14532d);
+    border: 2px solid var(--xp);
+    border-radius: 4px;
+    padding: 12px;
+    text-align: center;
+    box-shadow: 0 0 10px #6ee7b733;
+  }
+  .play-head { font-size: 14px; color: #bbf7d0; margin-bottom: 4px; }
+  .play-time {
+    font-size: 40px;
+    color: var(--xp);
+    text-shadow: 2px 2px 0 #000;
+    letter-spacing: 3px;
+    line-height: 1.2;
+    margin-bottom: 10px;
+    animation: pulse 2s ease-in-out infinite;
+  }
   .tickets { font-size: 22px; letter-spacing: 3px; min-height: 28px; }
   .ticket-note { font-size: 11px; color: var(--text-dim); width: 100%; }
 
@@ -482,7 +501,12 @@
     <div class="ticket-row">
       <div>ゲーム解禁チケット：<span class="tickets" id="tickets">－</span></div>
       <button class="btn secondary" id="useTicketBtn">チケットを使って遊ぶ(30分)</button>
-      <div class="ticket-note">セッション3回クリアごとにチケット1枚ゲット。ゲームは我慢じゃなくて「報酬」だケロ！</div>
+      <div class="ticket-note">セッション3回クリアごとにチケット1枚ゲット。好きなゲームで遊んでOK。ゲームは我慢じゃなくて「報酬」だケロ！</div>
+    </div>
+    <div class="play-box" id="playBox" style="display:none">
+      <div class="play-head">🎮 ごほうびタイム中！</div>
+      <div class="play-time" id="playRemain">--:--</div>
+      <button class="btn secondary" id="endPlayBtn">🔙 早めに戻る（+10 EXP）</button>
     </div>
   </div>
 
@@ -591,14 +615,14 @@
    - 進捗・レベル・ストリークは localStorage に保存
    ===================================================== */
 
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.3.0";
 const LS_KEY = "sippyQuest.v1";
 const SESSIONS_PER_TICKET = 3;
 const XP_PER_SESSION = 30;
 const XP_QUEST_CLEAR = 50;
 const XP_BOSS_CLEAR = 120;
 const BOSS_MIN_HP = 3;
-const GAME_URL = "../games/battle-island/";
+const PLAY_MINUTES = 30;
 const XP_ROUTINE = 20;
 const XP_ROUTINE_PERFECT = 30;
 const ROUTINES = [
@@ -621,6 +645,7 @@ function defaultState() {
     pendingReports: [],  // 戦果報告待ちキュー [{keys, minutes}]
     adhocQuests: [],     // ⚡突発クエスト（CSV外のタスク）
     routines: { date: null, doneToday: [], counts: {}, perfectAwarded: false },
+    playEnd: null,       // 🎮ごほうびタイム（遊び時間）の終了時刻
     muted: false
   };
 }
@@ -1063,12 +1088,14 @@ function renderTime() {
   if (S.battles.length) {
     const soonest = Math.min(...S.battles.map(b => b.end));
     document.title = fmt(Math.max(0, Math.round((soonest - Date.now()) / 1000))) + " ⚔ Sippy Quest";
+  } else if (S.playEnd) {
+    document.title = fmt(Math.max(0, Math.round((S.playEnd - Date.now()) / 1000))) + " 🎮 Sippy Quest";
   } else {
     document.title = "Sippy Quest | やる気クエスト";
   }
 }
 function ensureTick() {
-  if (!tickHandle && S.battles.length) tickHandle = setInterval(tick, 500);
+  if (!tickHandle && (S.battles.length || S.playEnd)) tickHandle = setInterval(tick, 500);
 }
 function tick() {
   const now = Date.now();
@@ -1082,9 +1109,18 @@ function tick() {
     renderQuests();
     maybeOpenReport();
   }
+  // 🎮ごほうびタイム終了
+  if (S.playEnd && now >= S.playEnd) {
+    S.playEnd = null;
+    save();
+    SFX.timeup();
+    renderPlay();
+    showOverlay("ごほうびタイム終了", "たっぷり遊んだケロ！\nすっきりした頭で、次のクエストに戻るケロ〜\n（もっと遊びたければチケットをもう1枚使えばOK）");
+  }
   updateBattleTimes();
+  updatePlayTime();
   renderTime();
-  if (!S.battles.length && tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+  if (!S.battles.length && !S.playEnd && tickHandle) { clearInterval(tickHandle); tickHandle = null; }
 }
 
 /* ---------- 進行中の戦闘リスト ---------- */
@@ -1493,16 +1529,50 @@ function renderRoutines() {
   }
 }
 
-/* ---------- tickets ---------- */
+/* ---------- tickets / ごほうびタイム ---------- */
 function useTicket() {
   if (S.tickets < 1) return;
   S.tickets--;
+  SFX.ticket();
+  if (S.playEnd && Date.now() < S.playEnd) {
+    // 遊び時間中にもう1枚使ったら30分延長
+    S.playEnd += PLAY_MINUTES * 60 * 1000;
+    showOverlay("＋30分延長!", "ごほうびタイムを延長したケロ！\nひきつづき楽しむケロ〜");
+  } else {
+    S.playEnd = Date.now() + PLAY_MINUTES * 60 * 1000;
+    showOverlay("ごほうびタイム!", `${PLAY_MINUTES}分、好きなゲームを思いっきり遊ぶケロ！\nSwitchでもスマホでも何でもOK。\n罪悪感は置いていくこと。これは正式な報酬だケロ！`);
+  }
+  save();
+  ensureTick();
+  renderStatus();
+  renderPlay();
+}
+function endPlayEarly() {
+  if (!S.playEnd) return;
+  S.playEnd = null;
+  const leveled = gainXp(10);
   save();
   renderStatus();
-  SFX.ticket();
-  showOverlay("ごほうびタイム!", "30分、思いっきり遊ぶケロ！\n罪悪感は置いていくこと。これは正式な報酬だケロ！", () => {
-    window.open(GAME_URL, "_blank");
-  });
+  renderPlay();
+  renderTime();
+  SFX.clear();
+  let msg = "自分でごほうびを切り上げるとは…上級者だケロ！！\n+10 EXP";
+  if (leveled) { msg += `\n\n⭐ レベルアップ！ Lv${S.lvl} になった！`; SFX.levelup(); confetti(40); }
+  showOverlay("おかえり!", msg);
+  sippySay("idle");
+}
+function renderPlay() {
+  const box = document.getElementById("playBox");
+  const active = S.playEnd && Date.now() < S.playEnd;
+  box.style.display = active ? "" : "none";
+  const btn = document.getElementById("useTicketBtn");
+  btn.textContent = active ? "＋30分延長（チケット1枚）" : "チケットを使って遊ぶ(30分)";
+  if (active) updatePlayTime();
+}
+function updatePlayTime() {
+  if (!S.playEnd) return;
+  const el = document.getElementById("playRemain");
+  if (el) el.textContent = fmt(Math.max(0, Math.round((S.playEnd - Date.now()) / 1000)));
 }
 
 /* ---------- fx ---------- */
@@ -1571,6 +1641,7 @@ document.getElementById("ovClose").addEventListener("click", () => {
   maybeOpenReport(); // 溜まっている戦果報告があれば続けて開く
 });
 document.getElementById("useTicketBtn").addEventListener("click", useTicket);
+document.getElementById("endPlayBtn").addEventListener("click", endPlayEarly);
 document.getElementById("reloadCsvBtn").addEventListener("click", () => loadCsvFromRepo(false));
 document.getElementById("exportCsvBtn").addEventListener("click", exportCsv);
 document.getElementById("pickCsvBtn").addEventListener("click", () => document.getElementById("csvFile").click());
@@ -1632,8 +1703,10 @@ document.body.addEventListener("drop", e => {
   document.querySelectorAll(".len-btn").forEach(b => b.classList.toggle("active", parseInt(b.dataset.min, 10) === S.timerMin));
   checkStreakOnLoad();
   quests = (S.adhocQuests || []).slice(); // CSV読み込み前でも突発クエストは表示
+  if (S.playEnd && Date.now() >= S.playEnd) S.playEnd = null; // 閉じている間に遊び時間終了
   renderStatus();
   renderRoutines();
+  renderPlay();
   renderQuests();
   renderTime();
   // 開きっぱなしで日付をまたいだ場合もルーチンをリセット
